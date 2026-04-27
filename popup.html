@@ -13,9 +13,12 @@
       <h1 class="header-title">收藏夹</h1>
       <span class="header-stats" id="stats"></span>
     </div>
-    <button class="btn-ghost" id="openManage" title="管理页面">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-    </button>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <span class="sync-indicator" id="syncIndicator" title="同步状态"></span>
+      <button class="btn-ghost" id="openManage" title="管理页面">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      </button>
+    </div>
   </header>
 
   <div class="search-wrap">

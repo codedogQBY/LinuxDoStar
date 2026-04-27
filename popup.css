@@ -40,6 +40,15 @@ body {
 }
 .btn-ghost:hover { background: #f4f4f5; color: #09090b; }
 
+/* Sync indicator */
+.sync-indicator {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d4d4d8;
+}
+.sync-indicator.synced { background: #22c55e; }
+.sync-indicator.syncing { background: #eab308; animation: pulse 1s ease infinite; }
+.sync-indicator.error { background: #ef4444; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
 /* ===== Search ===== */
 .search-wrap {
   padding: 8px 12px;

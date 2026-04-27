@@ -31,6 +31,7 @@ function bind() {
     showConfirm('清空全部收藏？不可恢复', async () => { store.bookmarks = {}; await StarStorage.save(store); reload(); });
   });
   $('newColBtn').addEventListener('click', createCol);
+  $('syncBtn').addEventListener('click', openSyncPanel);
   $('navList').addEventListener('click', handleNav);
   $('content').addEventListener('click', handleContent);
   $('panelClose').addEventListener('click', closePanel);
@@ -335,6 +336,125 @@ function showConfirm(msg, onYes) {
   d.querySelector('.no').onclick = () => d.remove();
   $('content').prepend(d);
 }
+
+// ==================== Sync Panel ====================
+async function openSyncPanel() {
+  const cfg = await chrome.runtime.sendMessage({ type: 'SYNC_GET_CONFIG' });
+  const connected = cfg.token && cfg.gistId;
+
+  $('panelTitle').textContent = '☁️ 同步设置';
+
+  if (!connected) {
+    // Not connected — show token input
+    $('panelBody').innerHTML = `
+      <div class="sync-field">
+        <div class="sync-label">GitHub Personal Access Token</div>
+        <input class="sync-input" id="tokenInput" type="password" placeholder="ghp_xxxxxxxxxxxx">
+        <div class="sync-info">
+          需要 <strong>gist</strong> 权限的 Token。<br>
+          <a href="https://github.com/settings/tokens/new?scopes=gist&description=LinuxDo+Star+Sync" target="_blank" style="color:#2563eb;">点此创建 Token →</a>
+        </div>
+      </div>
+      <button class="btn-primary" id="connectBtn">连接 GitHub</button>
+      <div id="syncMsg"></div>
+    `;
+    $('connectBtn').onclick = async () => {
+      const token = $('tokenInput').value.trim();
+      if (!token) return;
+      $('connectBtn').disabled = true;
+      $('connectBtn').textContent = '连接中...';
+      const result = await chrome.runtime.sendMessage({ type: 'SYNC_CONNECT', token });
+      if (result.ok) {
+        await reload();
+        openSyncPanel(); // Re-render as connected
+      } else {
+        $('syncMsg').innerHTML = `<div class="sync-error">${h(result.message)}</div>`;
+        $('connectBtn').disabled = false;
+        $('connectBtn').textContent = '连接 GitHub';
+      }
+    };
+  } else {
+    // Connected — show status & controls
+    $('panelBody').innerHTML = `
+      <div class="sync-field">
+        <div class="sync-label">状态</div>
+        <div class="sync-value">
+          <span class="sync-dot ${cfg.status || 'connected'}"></span>
+          ${cfg.username ? `@${h(cfg.username)}` : '已连接'}
+        </div>
+      </div>
+      <div class="sync-field">
+        <div class="sync-label">Gist ID</div>
+        <div class="sync-value" style="font-family:monospace;font-size:12px;">
+          <a href="https://gist.github.com/${h(cfg.gistId)}" target="_blank" style="color:#2563eb;">${h(cfg.gistId)}</a>
+        </div>
+      </div>
+      <div class="sync-field">
+        <div class="sync-label">上次同步</div>
+        <div class="sync-value">${cfg.lastSyncAt ? new Date(cfg.lastSyncAt).toLocaleString('zh-CN') : '从未'}</div>
+      </div>
+      ${cfg.lastError ? `<div class="sync-error">上次错误: ${h(cfg.lastError)}</div>` : ''}
+      <label class="sync-toggle">
+        <input type="checkbox" id="autoSyncToggle" ${cfg.autoSync ? 'checked' : ''}>
+        自动同步（收藏变更后 30 秒 + 每 30 分钟）
+      </label>
+      <div class="sync-actions">
+        <button class="btn-primary" id="syncNowBtn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          立即同步
+        </button>
+        <button class="btn-outline btn-sm btn-danger" id="disconnectBtn">断开连接</button>
+      </div>
+      <div id="syncMsg"></div>
+      <div class="sync-info" style="margin-top:16px;">
+        同步数据存储在你的 GitHub 私有 Gist 中。<br>
+        断开连接不会删除本地或远端数据。
+      </div>
+    `;
+
+    $('autoSyncToggle').onchange = (e) => {
+      chrome.runtime.sendMessage({ type: 'SYNC_SET_AUTO', enabled: e.target.checked });
+    };
+
+    $('syncNowBtn').onclick = async () => {
+      $('syncNowBtn').disabled = true;
+      $('syncNowBtn').textContent = '同步中...';
+      const result = await chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
+      if (result.ok) {
+        $('syncMsg').innerHTML = `<div style="color:#22c55e;font-size:12px;margin-top:8px;">✓ 同步成功</div>`;
+        await reload();
+      } else {
+        $('syncMsg').innerHTML = `<div class="sync-error">${h(result.message)}</div>`;
+      }
+      $('syncNowBtn').disabled = false;
+      $('syncNowBtn').textContent = '立即同步';
+    };
+
+    $('disconnectBtn').onclick = async () => {
+      await chrome.runtime.sendMessage({ type: 'SYNC_DISCONNECT' });
+      openSyncPanel(); // Re-render as disconnected
+    };
+  }
+
+  showPanel();
+}
+
+// Listen for sync status updates
+chrome.runtime.onMessage?.addListener?.((msg) => {
+  if (msg.type === 'SYNC_STATUS') {
+    const btn = $('syncBtn');
+    if (btn) {
+      btn.classList.toggle('syncing', msg.status === 'syncing');
+      const text = $('syncBtnText');
+      if (text) {
+        if (msg.status === 'syncing') text.textContent = '⟳ 同步中...';
+        else if (msg.status === 'synced') text.textContent = '✓ 已同步';
+        else if (msg.status === 'error') text.textContent = '⚠ 同步失败';
+        else text.textContent = '☁️ 同步设置';
+      }
+    }
+  }
+});
 
 // ==================== Utils ====================
 function $(id) { return document.getElementById(id); }

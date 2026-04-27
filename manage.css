@@ -269,6 +269,41 @@ body {
   border-radius: 4px; cursor: pointer; background: #fff; color: #71717a; border: 1px solid #e4e4e7;
 }
 
+/* Sync btn */
+.btn-sync { gap: 6px; color: #71717a; }
+.btn-sync:hover { color: #09090b; }
+.btn-sync svg { flex-shrink: 0; }
+.btn-sync.syncing svg { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Sync status dot */
+.sync-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px;
+}
+.sync-dot.connected { background: #22c55e; }
+.sync-dot.syncing { background: #eab308; }
+.sync-dot.error { background: #ef4444; }
+.sync-dot.disconnected { background: #d4d4d8; }
+
+/* Sync panel fields */
+.sync-field { margin-bottom: 12px; }
+.sync-label { font-size: 12px; font-weight: 500; color: #71717a; margin-bottom: 4px; }
+.sync-value { font-size: 13px; color: #09090b; }
+.sync-input {
+  width: 100%; height: 34px; padding: 0 10px;
+  border: 1px solid #e4e4e7; border-radius: 6px;
+  font-size: 13px; font-family: monospace; color: #09090b; outline: none;
+}
+.sync-input:focus { border-color: #a1a1aa; box-shadow: 0 0 0 2px rgba(0,0,0,.03); }
+.sync-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.sync-toggle {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 13px; color: #09090b;
+}
+.sync-toggle input[type="checkbox"] { accent-color: #18181b; width: 16px; height: 16px; }
+.sync-info { font-size: 11px; color: #a1a1aa; margin-top: 8px; line-height: 1.4; }
+.sync-error { font-size: 12px; color: #ef4444; margin-top: 6px; }
+
 /* Empty */
 .empty { display: flex; flex-direction: column; align-items: center; padding: 64px 20px; text-align: center; }
 .empty svg { width: 44px; height: 44px; fill: none; stroke: #d4d4d8; stroke-width: 1; margin-bottom: 10px; }

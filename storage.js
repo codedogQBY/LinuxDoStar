@@ -82,10 +82,11 @@ const StarStorage = {
     const store = await this.getAll();
     const id = 'col_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const order = Object.keys(store.collections).length;
+    const now = new Date().toISOString();
     store.collections[id] = {
       id, name: name || '新收藏夹',
       icon: icon || '📁', color: color || '#71717a',
-      createdAt: new Date().toISOString(), order,
+      createdAt: now, updatedAt: now, order,
     };
     await this.save(store);
     return id;
@@ -95,6 +96,7 @@ const StarStorage = {
     const store = await this.getAll();
     if (store.collections[id]) {
       Object.assign(store.collections[id], updates);
+      store.collections[id].updatedAt = new Date().toISOString();
       await this.save(store);
     }
   },
@@ -127,30 +129,35 @@ const StarStorage = {
   async toggleTopicStar(topicId, meta, collectionId) {
     const store = await this.getAll();
     const key = `topic_${topicId}`;
+    const now = new Date().toISOString();
     collectionId = collectionId || 'default';
 
     if (store.bookmarks[key]?.starred) {
       store.bookmarks[key].starred = false;
+      store.bookmarks[key].updatedAt = now;
       if (!Object.keys(store.bookmarks[key].posts || {}).length) {
         delete store.bookmarks[key];
       }
       await this.save(store);
+      this._notifyChange();
       return false;
     } else {
       if (!store.bookmarks[key]) {
         store.bookmarks[key] = {
           topicId, topicTitle: meta.title, topicUrl: meta.url,
           category: meta.category || '',
-          starredAt: new Date().toISOString(), starred: true,
+          starredAt: now, updatedAt: now, starred: true,
           collectionId, tags: [], note: '', posts: {},
         };
       } else {
         store.bookmarks[key].starred = true;
-        store.bookmarks[key].starredAt = new Date().toISOString();
+        store.bookmarks[key].starredAt = now;
+        store.bookmarks[key].updatedAt = now;
         store.bookmarks[key].topicTitle = meta.title || store.bookmarks[key].topicTitle;
         if (collectionId) store.bookmarks[key].collectionId = collectionId;
       }
       await this.save(store);
+      this._notifyChange();
       return true;
     }
   },
@@ -159,48 +166,62 @@ const StarStorage = {
     const store = await this.getAll();
     const topicKey = `topic_${topicId}`;
     const postKey = `post_${postNumber}`;
+    const now = new Date().toISOString();
     collectionId = collectionId || 'default';
 
     if (!store.bookmarks[topicKey]) {
       store.bookmarks[topicKey] = {
         topicId, topicTitle: topicMeta.title, topicUrl: topicMeta.url,
         category: topicMeta.category || '',
-        starredAt: new Date().toISOString(), starred: true,
+        starredAt: now, updatedAt: now, starred: true,
         collectionId, tags: [], note: '', posts: {},
       };
     }
 
     if (store.bookmarks[topicKey].posts[postKey]) {
       delete store.bookmarks[topicKey].posts[postKey];
+      store.bookmarks[topicKey].updatedAt = now;
       if (!store.bookmarks[topicKey].starred && !Object.keys(store.bookmarks[topicKey].posts).length) {
         delete store.bookmarks[topicKey];
       }
       await this.save(store);
+      this._notifyChange();
       return false;
     } else {
       store.bookmarks[topicKey].posts[postKey] = {
         postNumber, postUrl: postMeta.url,
         author: postMeta.author, excerpt: postMeta.excerpt,
-        starredAt: new Date().toISOString(),
+        starredAt: now, updatedAt: now,
         collectionId, tags: [], note: '',
       };
+      store.bookmarks[topicKey].updatedAt = now;
       if (!store.bookmarks[topicKey].starred) store.bookmarks[topicKey].starred = true;
       await this.save(store);
+      this._notifyChange();
       return true;
     }
   },
 
   async moveToCollection(topicKey, collectionId, postKey) {
     const store = await this.getAll();
+    const now = new Date().toISOString();
     if (postKey) {
       if (store.bookmarks[topicKey]?.posts?.[postKey]) {
         store.bookmarks[topicKey].posts[postKey].collectionId = collectionId;
+        store.bookmarks[topicKey].posts[postKey].updatedAt = now;
       }
     } else {
       if (store.bookmarks[topicKey]) {
         store.bookmarks[topicKey].collectionId = collectionId;
+        store.bookmarks[topicKey].updatedAt = now;
       }
     }
     await this.save(store);
+    this._notifyChange();
+  },
+
+  // Notify background to trigger auto-sync
+  _notifyChange() {
+    try { chrome.runtime.sendMessage({ type: 'DATA_CHANGED' }); } catch {}
   },
 };

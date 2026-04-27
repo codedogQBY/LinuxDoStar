@@ -11,7 +11,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
   render();
   bind();
+  loadSyncStatus();
 });
+
+async function loadSyncStatus() {
+  try {
+    const cfg = await chrome.runtime.sendMessage({ type: 'SYNC_GET_CONFIG' });
+    const el = $('syncIndicator');
+    if (cfg.token && cfg.gistId) {
+      el.className = `sync-indicator ${cfg.status || 'synced'}`;
+      el.title = cfg.status === 'synced' ? '已同步' : cfg.status === 'syncing' ? '同步中' : cfg.status === 'error' ? '同步失败' : '已连接';
+    } else {
+      el.className = 'sync-indicator';
+      el.title = '未配置同步';
+    }
+  } catch {}
+}
 
 function bind() {
   $('search').addEventListener('input', debounce(render, 120));

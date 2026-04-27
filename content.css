@@ -13,13 +13,19 @@
 .ld-star-btn.btn.btn-icon.btn-flat {
   /* Inherit Discourse's btn-flat sizing/spacing */
   position: relative;
+  /* Ensure the entire button area is clickable */
+  cursor: pointer;
+}
+
+/* Make sure all child elements pass clicks to the button */
+.ld-star-btn * {
+  pointer-events: none;
 }
 
 /* Star icon - match Discourse icon sizing */
 .ld-star-btn .ld-star-icon {
   width: 1em;
   height: 1em;
-  pointer-events: none;
   transition: transform 200ms ease;
 }
 
@@ -76,6 +82,7 @@
   padding: 0;
   transition: background 150ms ease;
 }
+.ld-star-topic-btn * { pointer-events: none; }
 .ld-star-topic-btn:hover {
   background: rgba(234, 179, 8, 0.1);
 }
