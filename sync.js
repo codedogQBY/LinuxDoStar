@@ -221,7 +221,11 @@ const SyncManager = {
   // ==================== Merge Algorithm ====================
   /**
    * Merge local and remote data
-   * Strategy: union of all items, per-item latest-wins by updatedAt/starredAt
+   * Strategy:
+   *  - Union of all items
+   *  - Per-item latest-wins by updatedAt/starredAt
+   *  - Soft-deletes (_deleted + _deletedAt) propagate: if deleted side is newer, item stays deleted
+   *  - Tombstones older than 7 days are purged after merge
    */
   merge(local, remote) {
     const result = { collections: {}, bookmarks: {} };
@@ -238,7 +242,6 @@ const SyncManager = {
       else if (!r) result.collections[id] = l;
       else result.collections[id] = this._newer(l, r);
     }
-    // Ensure default always exists
     if (!result.collections.default) {
       result.collections.default = {
         id: 'default', name: '默认收藏夹', icon: '⭐', color: '#eab308',
@@ -246,7 +249,7 @@ const SyncManager = {
       };
     }
 
-    // --- Merge bookmarks ---
+    // --- Merge bookmarks (with soft-delete support) ---
     const allTopicKeys = new Set([
       ...Object.keys(local.bookmarks || {}),
       ...Object.keys(remote.bookmarks || {}),
@@ -255,13 +258,51 @@ const SyncManager = {
       const l = local.bookmarks?.[key];
       const r = remote.bookmarks?.[key];
 
+      // One side missing entirely — use the other
+      if (!l && !r) continue;
       if (!l) { result.bookmarks[key] = r; continue; }
       if (!r) { result.bookmarks[key] = l; continue; }
 
-      // Merge topic-level: take newer for top-level fields
+      // Both exist — check soft-delete
+      const lDel = l._deleted;
+      const rDel = r._deleted;
+
+      if (lDel && rDel) {
+        // Both deleted — keep tombstone with latest time
+        result.bookmarks[key] = this._newer(l, r);
+        continue;
+      }
+
+      if (lDel && !rDel) {
+        // Local deleted, remote alive — who's newer?
+        const lTime = new Date(l._deletedAt || 0).getTime();
+        const rTime = new Date(r.updatedAt || r.starredAt || 0).getTime();
+        if (lTime >= rTime) {
+          // Delete is newer — keep tombstone
+          result.bookmarks[key] = l;
+        } else {
+          // Remote update is newer — resurrect
+          result.bookmarks[key] = r;
+        }
+        continue;
+      }
+
+      if (!lDel && rDel) {
+        // Remote deleted, local alive — who's newer?
+        const rTime = new Date(r._deletedAt || 0).getTime();
+        const lTime = new Date(l.updatedAt || l.starredAt || 0).getTime();
+        if (rTime >= lTime) {
+          result.bookmarks[key] = r;
+        } else {
+          result.bookmarks[key] = l;
+        }
+        continue;
+      }
+
+      // Both alive — merge normally
       const merged = { ...this._newer(l, r) };
 
-      // Merge posts: union, per-post latest-wins
+      // Merge posts (with soft-delete)
       merged.posts = {};
       const allPostKeys = new Set([
         ...Object.keys(l.posts || {}),
@@ -270,13 +311,50 @@ const SyncManager = {
       for (const pk of allPostKeys) {
         const lp = l.posts?.[pk];
         const rp = r.posts?.[pk];
-        if (!lp) merged.posts[pk] = rp;
-        else if (!rp) merged.posts[pk] = lp;
-        else merged.posts[pk] = this._newer(lp, rp);
+
+        if (!lp && !rp) continue;
+        if (!lp) { merged.posts[pk] = rp; continue; }
+        if (!rp) { merged.posts[pk] = lp; continue; }
+
+        const lpDel = lp._deleted;
+        const rpDel = rp._deleted;
+
+        if (lpDel && rpDel) {
+          merged.posts[pk] = this._newer(lp, rp);
+        } else if (lpDel && !rpDel) {
+          const lt = new Date(lp._deletedAt || 0).getTime();
+          const rt = new Date(rp.updatedAt || rp.starredAt || 0).getTime();
+          merged.posts[pk] = lt >= rt ? lp : rp;
+        } else if (!lpDel && rpDel) {
+          const rt = new Date(rp._deletedAt || 0).getTime();
+          const lt = new Date(lp.updatedAt || lp.starredAt || 0).getTime();
+          merged.posts[pk] = rt >= lt ? rp : lp;
+        } else {
+          merged.posts[pk] = this._newer(lp, rp);
+        }
       }
 
       result.bookmarks[key] = merged;
     }
+
+    // Purge old tombstones (> 7 days)
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const [key, bk] of Object.entries(result.bookmarks)) {
+      if (bk._deleted && new Date(bk._deletedAt || 0).getTime() < cutoff) {
+        delete result.bookmarks[key];
+        continue;
+      }
+      if (bk.posts) {
+        for (const [pk, p] of Object.entries(bk.posts)) {
+          if (p._deleted && new Date(p._deletedAt || 0).getTime() < cutoff) {
+            delete bk.posts[pk];
+          }
+        }
+      }
+    }
+
+    return result;
+  },
 
     return result;
   },

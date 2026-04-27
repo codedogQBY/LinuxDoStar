@@ -7,6 +7,8 @@ let store = { collections: {}, bookmarks: {} };
 let currentView = 'all';
 let currentSort = 'newest';
 const expanded = new Set();
+let batchMode = false;
+const selected = new Set(); // selected bookmark keys for batch delete
 
 document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
@@ -36,6 +38,10 @@ function bind() {
   $('content').addEventListener('click', handleContent);
   $('panelClose').addEventListener('click', closePanel);
   $('overlay').addEventListener('click', closePanel);
+  // Batch mode
+  $('batchMode').addEventListener('change', (e) => { batchMode = e.target.checked; selected.clear(); updateBatchBar(); render(); });
+  $('batchDeleteBtn').addEventListener('click', batchDelete);
+  $('batchCancelBtn').addEventListener('click', () => { $('batchMode').checked = false; batchMode = false; selected.clear(); updateBatchBar(); render(); });
 }
 
 // ==================== Nav ====================
@@ -43,6 +49,7 @@ function renderNav() {
   const cols = Object.values(store.collections).sort((a, b) => (a.order || 0) - (b.order || 0));
   const counts = { all: 0 };
   for (const bk of Object.values(store.bookmarks)) {
+    if (bk._deleted) continue;
     const c = bk.collectionId || 'default';
     counts[c] = (counts[c] || 0) + 1;
     counts.all++;
@@ -105,10 +112,31 @@ function editCol(cid) {
 }
 
 // ==================== Content ====================
-function handleContent(e) {
-  // Toggle card
+async function handleContent(e) {
+  // Batch mode checkbox
+  const chk = e.target.closest('.card-check');
+  if (chk) {
+    const key = chk.dataset.key;
+    if (chk.checked) selected.add(key); else selected.delete(key);
+    updateBatchBar();
+    return;
+  }
+
+  // Toggle card (only if not in batch mode)
   const head = e.target.closest('.card-head');
-  if (head && !e.target.closest('.card-btn')) {
+  if (head && !e.target.closest('.card-btn') && !e.target.closest('.card-check')) {
+    if (batchMode) {
+      // In batch mode, clicking the row toggles selection
+      const card = head.closest('.card');
+      const key = card.dataset.key;
+      const checkbox = card.querySelector('.card-check');
+      if (checkbox) {
+        checkbox.checked = !checkbox.checked;
+        if (checkbox.checked) selected.add(key); else selected.delete(key);
+        updateBatchBar();
+      }
+      return;
+    }
     const card = head.closest('.card');
     const k = card.dataset.key;
     card.classList.toggle('open');
@@ -128,15 +156,14 @@ function handleContent(e) {
   const a = act.dataset.act;
 
   if (a === 'del-t') {
-    delete store.bookmarks[act.dataset.key];
-    StarStorage.save(store).then(reload);
+    await StarStorage.softDeleteTopic(act.dataset.key);
+    store = await StarStorage.getAll();
+    reload();
   } else if (a === 'del-p') {
     const { tkey, pkey } = act.dataset;
-    if (store.bookmarks[tkey]?.posts?.[pkey]) {
-      delete store.bookmarks[tkey].posts[pkey];
-      if (!store.bookmarks[tkey].starred && !Object.keys(store.bookmarks[tkey].posts).length) delete store.bookmarks[tkey];
-      StarStorage.save(store).then(reload);
-    }
+    await StarStorage.softDeletePost(tkey, pkey);
+    store = await StarStorage.getAll();
+    reload();
   } else if (a === 'detail-t') {
     openTopicDetail(act.dataset.key);
   } else if (a === 'detail-p') {
@@ -149,7 +176,6 @@ function handleContent(e) {
 // ==================== Render ====================
 const CHEVRON = `<svg class="card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 const X = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const EYE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
 
 function render() {
@@ -158,6 +184,7 @@ function render() {
 
   let items = [];
   for (const [key, bk] of Object.entries(store.bookmarks)) {
+    if (bk._deleted) continue; // Skip tombstones
     if (currentView !== 'all' && (bk.collectionId || 'default') !== currentView) continue;
     let match = !q;
     if (q) {
@@ -181,20 +208,20 @@ function render() {
   }
 
   box.innerHTML = items.map(t => {
-    const posts = Object.entries(t.posts || {}).map(([pk, pv]) => ({ pk, ...pv })).sort((a, b) => new Date(b.starredAt || 0) - new Date(a.starredAt || 0));
+    const posts = Object.entries(t.posts || {}).map(([pk, pv]) => ({ pk, ...pv })).filter(p => !p._deleted).sort((a, b) => new Date(b.starredAt || 0) - new Date(a.starredAt || 0));
     const isOpen = expanded.has(t.key);
     const colName = (store.collections[t.collectionId] || store.collections.default)?.name || '';
 
     return `<div class="card${isOpen ? ' open' : ''}" data-key="${t.key}">
       <div class="card-head">
-        ${CHEVRON}
+        ${batchMode ? `<input type="checkbox" class="card-check" data-key="${t.key}" ${selected.has(t.key) ? 'checked' : ''}>` : CHEVRON}
         <svg class="card-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
         <div class="card-body">
           <div class="card-title"><a href="${h(t.topicUrl)}" target="_blank">${h(t.topicTitle || '未知')}</a></div>
           <div class="card-meta">
             ${t.category ? `<span class="tag">${h(t.category)}</span>` : ''}
             ${currentView === 'all' ? `<span class="tag">${h(colName)}</span>` : ''}
-            ${(t.tags || []).map(tg => `<span class="tag tag-note">${h(tg)}</span>`).join('')}
+            ${(t.tags || []).slice(0, 3).map(tg => `<span class="tag tag-note">${h(tg)}</span>`).join('')}${(t.tags || []).length > 3 ? `<span class="tag">+${(t.tags || []).length - 3}</span>` : ''}
             ${t.note ? '<span class="tag tag-note">📝</span>' : ''}
             <span class="card-time">${ft(t.starredAt)}</span>
             ${posts.length ? `<span class="tag">${posts.length} 评论</span>` : ''}
@@ -202,7 +229,6 @@ function render() {
         </div>
         <div class="card-actions">
           <button class="card-btn" data-act="move" data-tkey="${t.key}" title="移动">${FOLDER}</button>
-          <button class="card-btn" data-act="detail-t" data-key="${t.key}" title="详情">${EYE}</button>
           <button class="card-btn del" data-act="del-t" data-key="${t.key}" title="删除">${X}</button>
         </div>
       </div>
@@ -216,7 +242,6 @@ function render() {
             <div class="post-time">${ft(p.starredAt)}</div>
           </div>
           <div class="post-actions">
-            <button class="card-btn" data-act="detail-p" data-tkey="${t.key}" data-pkey="${p.pk}" title="详情">${EYE}</button>
             <button class="card-btn del" data-act="del-p" data-tkey="${t.key}" data-pkey="${p.pk}" title="删除">${X}</button>
           </div>
         </div>`).join('')}</div>` : ''}
@@ -337,6 +362,34 @@ function showConfirm(msg, onYes) {
   $('content').prepend(d);
 }
 
+// ==================== Batch Delete ====================
+function updateBatchBar() {
+  const bar = $('batchBar');
+  if (batchMode && selected.size > 0) {
+    bar.style.display = 'flex';
+    $('batchCount').textContent = `已选 ${selected.size} 项`;
+  } else {
+    bar.style.display = batchMode ? 'flex' : 'none';
+    $('batchCount').textContent = '已选 0 项';
+  }
+}
+
+async function batchDelete() {
+  if (!selected.size) return;
+  const count = selected.size;
+  showConfirm(`确认删除选中的 ${count} 个帖子及其评论？`, async () => {
+    for (const key of selected) {
+      await StarStorage.softDeleteTopic(key);
+    }
+    store = await StarStorage.getAll();
+    selected.clear();
+    batchMode = false;
+    $('batchMode').checked = false;
+    updateBatchBar();
+    reload();
+  });
+}
+
 // ==================== Sync Panel ====================
 async function openSyncPanel() {
   const cfg = await chrome.runtime.sendMessage({ type: 'SYNC_GET_CONFIG' });
@@ -455,6 +508,11 @@ chrome.runtime.onMessage?.addListener?.((msg) => {
     }
   }
 });
+
+// Notify background of data change (triggers auto-sync)
+function notifySync() {
+  try { chrome.runtime.sendMessage({ type: 'DATA_CHANGED' }); } catch {}
+}
 
 // ==================== Utils ====================
 function $(id) { return document.getElementById(id); }

@@ -1,35 +1,25 @@
 /**
- * LinuxDo Star - Background Service Worker
+ * LinuxDo Star - Background Service Worker (ES Module)
  * Handles badge count + auto-sync scheduling
  */
 
-importScripts('storage.js', 'sync.js');
+import { STORAGE_KEY, DEFAULT_COLLECTION, StarStorage } from './storage-esm.js';
+import { SyncManager } from './sync-esm.js';
 
 const SYNC_ALARM = 'linuxdo-star-sync';
 const SYNC_DEBOUNCE_ALARM = 'linuxdo-star-sync-debounce';
 
 // ==================== Install ====================
 chrome.runtime.onInstalled.addListener(() => {
-  // Set up periodic sync alarm (every 30 minutes)
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 30 });
 });
 
 // ==================== Alarm Handler ====================
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === SYNC_ALARM) {
-    // Periodic sync
+  if (alarm.name === SYNC_ALARM || alarm.name === SYNC_DEBOUNCE_ALARM) {
     const cfg = await SyncManager.getConfig();
     if (cfg.token && cfg.gistId && cfg.autoSync) {
-      console.log('[LinuxDo Star] Periodic sync triggered');
-      await SyncManager.sync();
-    }
-  }
-
-  if (alarm.name === SYNC_DEBOUNCE_ALARM) {
-    // Debounced sync after data change
-    const cfg = await SyncManager.getConfig();
-    if (cfg.token && cfg.gistId && cfg.autoSync) {
-      console.log('[LinuxDo Star] Auto-sync after data change');
+      console.log(`[LinuxDo Star] Sync triggered by ${alarm.name}`);
       await SyncManager.sync();
     }
   }
@@ -42,35 +32,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-
   if (message.type === 'DATA_CHANGED') {
-    // Debounce: sync 30s after last change
     chrome.alarms.create(SYNC_DEBOUNCE_ALARM, { delayInMinutes: 0.5 });
     updateBadge();
     sendResponse({ ok: true });
     return false;
   }
-
   if (message.type === 'SYNC_NOW') {
-    SyncManager.sync().then(result => sendResponse(result));
-    return true; // async
+    SyncManager.sync().then(r => sendResponse(r));
+    return true;
   }
-
   if (message.type === 'SYNC_CONNECT') {
-    SyncManager.connect(message.token).then(result => sendResponse(result));
+    SyncManager.connect(message.token).then(r => sendResponse(r));
     return true;
   }
-
   if (message.type === 'SYNC_DISCONNECT') {
-    SyncManager.disconnect().then(result => sendResponse(result));
+    SyncManager.disconnect().then(r => sendResponse(r));
     return true;
   }
-
   if (message.type === 'SYNC_GET_CONFIG') {
     SyncManager.getConfig().then(cfg => sendResponse(cfg));
     return true;
   }
-
   if (message.type === 'SYNC_SET_AUTO') {
     SyncManager.getConfig().then(async cfg => {
       cfg.autoSync = message.enabled;
@@ -85,15 +68,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function updateBadge() {
   try {
     const store = await StarStorage.getAll();
-    const count = Object.keys(store.bookmarks || {}).length;
-    if (count > 0) {
-      chrome.action.setBadgeText({ text: String(count) });
-      chrome.action.setBadgeBackgroundColor({ color: '#18181b' });
-    } else {
-      chrome.action.setBadgeText({ text: '' });
-    }
+    const count = Object.values(store.bookmarks || {}).filter(b => !b._deleted).length;
+    chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
+    chrome.action.setBadgeBackgroundColor({ color: '#18181b' });
   } catch {}
 }
 
-// Initial badge update
 updateBadge();

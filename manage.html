@@ -34,11 +34,22 @@
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <input id="searchInput" placeholder="搜索标题、作者、内容...">
       </div>
-      <select class="select-sm" id="sortSelect">
-        <option value="newest">最新收藏</option>
-        <option value="oldest">最早收藏</option>
-        <option value="title">按标题</option>
-      </select>
+      <div class="toolbar-right">
+        <div class="batch-bar" id="batchBar" style="display:none;">
+          <span class="batch-count" id="batchCount">已选 0 项</span>
+          <button class="btn-outline btn-sm btn-danger" id="batchDeleteBtn">批量删除</button>
+          <button class="btn-outline btn-sm" id="batchCancelBtn">取消</button>
+        </div>
+        <label class="batch-toggle" title="批量选择模式">
+          <input type="checkbox" id="batchMode">
+          <span>多选</span>
+        </label>
+        <select class="select-sm" id="sortSelect">
+          <option value="newest">最新收藏</option>
+          <option value="oldest">最早收藏</option>
+          <option value="title">按标题</option>
+        </select>
+      </div>
     </div>
     <div class="content" id="content"></div>
   </main>

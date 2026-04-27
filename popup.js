@@ -75,9 +75,8 @@ async function handleClick(e) {
   const dtBtn = t.closest('[data-act="del-t"]');
   if (dtBtn) {
     e.stopPropagation();
-    const key = dtBtn.dataset.key;
-    delete store.bookmarks[key];
-    await StarStorage.save(store);
+    await StarStorage.softDeleteTopic(dtBtn.dataset.key);
+    store = await StarStorage.getAll();
     render();
     return;
   }
@@ -87,13 +86,9 @@ async function handleClick(e) {
   if (dpBtn) {
     e.stopPropagation();
     const { tkey, pkey } = dpBtn.dataset;
-    if (store.bookmarks[tkey]?.posts?.[pkey]) {
-      delete store.bookmarks[tkey].posts[pkey];
-      if (!store.bookmarks[tkey].starred && !Object.keys(store.bookmarks[tkey].posts).length)
-        delete store.bookmarks[tkey];
-      await StarStorage.save(store);
-      render();
-    }
+    await StarStorage.softDeletePost(tkey, pkey);
+    store = await StarStorage.getAll();
+    render();
     return;
   }
 
@@ -120,12 +115,17 @@ function render() {
 
   // Stats
   let nT = 0, nP = 0;
-  Object.values(bks).forEach(b => { if (b.starred) nT++; nP += Object.keys(b.posts || {}).length; });
+  Object.values(bks).forEach(b => {
+    if (b._deleted) return;
+    if (b.starred) nT++;
+    nP += Object.keys(b.posts || {}).filter(k => !b.posts[k]._deleted).length;
+  });
   $('stats').textContent = (nT || nP) ? `${nT} 帖 · ${nP} 评` : '';
 
   // Group by collection
   const groups = {};
   for (const [key, bk] of Object.entries(bks)) {
+    if (bk._deleted) continue; // Skip tombstones
     const cid = bk.collectionId || 'default';
     if (!groups[cid]) groups[cid] = [];
     let match = !q;
@@ -170,6 +170,7 @@ function render() {
 function renderTopic(t, q) {
   const posts = Object.entries(t.posts || {})
     .map(([pk, pv]) => ({ pk, ...pv }))
+    .filter(p => !p._deleted) // Skip tombstones
     .filter(p => !q || p.author?.toLowerCase().includes(q) || p.excerpt?.toLowerCase().includes(q))
     .sort((a, b) => new Date(b.starredAt || 0) - new Date(a.starredAt || 0));
 
@@ -183,6 +184,7 @@ function renderTopic(t, q) {
         <div class="topic-title" data-url="${a(t.topicUrl)}">${h(t.topicTitle || '未知标题')}</div>
         <div class="topic-meta">
           ${t.category ? `<span class="badge">${h(t.category)}</span>` : ''}
+          ${(t.tags || []).slice(0, 3).map(tg => `<span class="badge badge-tag">${h(tg)}</span>`).join('')}${(t.tags || []).length > 3 ? `<span class="badge">+${(t.tags || []).length - 3}</span>` : ''}
           <span class="badge">${ft(t.starredAt)}</span>
           ${totalPosts ? `<span class="badge">${totalPosts} 评</span>` : ''}
         </div>

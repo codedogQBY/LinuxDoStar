@@ -105,6 +105,27 @@ body {
   border-radius: 6px; font-size: 13px; color: #09090b; background: #fff; cursor: pointer;
 }
 
+.toolbar-right { display: flex; align-items: center; gap: 10px; }
+
+/* Batch mode */
+.batch-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #71717a; cursor: pointer; user-select: none;
+}
+.batch-toggle input { accent-color: #18181b; width: 14px; height: 14px; cursor: pointer; }
+
+.batch-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px; background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 6px; font-size: 12px;
+}
+.batch-count { color: #dc2626; font-weight: 500; white-space: nowrap; }
+
+.card-check {
+  width: 16px; height: 16px; accent-color: #18181b; cursor: pointer; flex-shrink: 0;
+  margin-right: 2px;
+}
+
 /* Content */
 .content { flex: 1; overflow-y: auto; padding: 12px 20px; }
 .content::-webkit-scrollbar { width: 6px; }

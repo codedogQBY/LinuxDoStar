@@ -139,6 +139,9 @@ body {
   padding: 0 4px; font-size: 10px; font-weight: 500;
   border-radius: 3px; background: #f4f4f5; color: #71717a;
 }
+.badge-tag {
+  background: #fefce8; color: #a16207;
+}
 
 .topic-actions {
   display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity 80ms;

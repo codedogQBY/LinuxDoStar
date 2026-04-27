@@ -147,7 +147,7 @@ const StarStorage = {
           topicId, topicTitle: meta.title, topicUrl: meta.url,
           category: meta.category || '',
           starredAt: now, updatedAt: now, starred: true,
-          collectionId, tags: [], note: '', posts: {},
+          collectionId, tags: meta.tags || [], note: '', posts: {},
         };
       } else {
         store.bookmarks[key].starred = true;
@@ -174,7 +174,7 @@ const StarStorage = {
         topicId, topicTitle: topicMeta.title, topicUrl: topicMeta.url,
         category: topicMeta.category || '',
         starredAt: now, updatedAt: now, starred: true,
-        collectionId, tags: [], note: '', posts: {},
+        collectionId, tags: topicMeta.tags || [], note: '', posts: {},
       };
     }
 
@@ -223,5 +223,56 @@ const StarStorage = {
   // Notify background to trigger auto-sync
   _notifyChange() {
     try { chrome.runtime.sendMessage({ type: 'DATA_CHANGED' }); } catch {}
+  },
+
+  /**
+   * Soft-delete a bookmark (mark as deleted instead of removing)
+   * This allows sync to propagate deletions across devices
+   */
+  async softDeleteTopic(topicKey) {
+    const store = await this.getAll();
+    if (store.bookmarks[topicKey]) {
+      store.bookmarks[topicKey] = {
+        _deleted: true,
+        _deletedAt: new Date().toISOString(),
+        topicId: store.bookmarks[topicKey].topicId,
+      };
+    }
+    await this.save(store);
+    this._notifyChange();
+  },
+
+  async softDeletePost(topicKey, postKey) {
+    const store = await this.getAll();
+    if (store.bookmarks[topicKey]?.posts?.[postKey]) {
+      store.bookmarks[topicKey].posts[postKey] = {
+        _deleted: true,
+        _deletedAt: new Date().toISOString(),
+      };
+      store.bookmarks[topicKey].updatedAt = new Date().toISOString();
+    }
+    await this.save(store);
+    this._notifyChange();
+  },
+
+  /**
+   * Purge all soft-deleted items older than 7 days
+   * Called after sync to clean up tombstones
+   */
+  async purgeDeleted(store) {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const [key, bk] of Object.entries(store.bookmarks || {})) {
+      if (bk._deleted && new Date(bk._deletedAt || 0).getTime() < cutoff) {
+        delete store.bookmarks[key];
+        continue;
+      }
+      if (bk.posts) {
+        for (const [pk, p] of Object.entries(bk.posts)) {
+          if (p._deleted && new Date(p._deletedAt || 0).getTime() < cutoff) {
+            delete bk.posts[pk];
+          }
+        }
+      }
+    }
   },
 };

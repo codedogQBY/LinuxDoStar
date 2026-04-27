@@ -41,9 +41,30 @@
     return '';
   }
 
+  function getTopicTags() {
+    // Discourse tags appear as links in .discourse-tags or .topic-header-extra
+    const tagEls = document.querySelectorAll(
+      '.discourse-tags .discourse-tag,' +
+      '.topic-header-extra .discourse-tag,' +
+      '#topic-title .discourse-tag,' +
+      '.tag-list .discourse-tag'
+    );
+    const tags = [];
+    tagEls.forEach(el => {
+      const t = el.textContent.trim();
+      if (t && !tags.includes(t)) tags.push(t);
+    });
+    return tags;
+  }
+
   function getTopicMeta() {
     const id = getTopicId();
-    return { title: getTopicTitle(), url: `https://linux.do/t/${getTopicSlug()}/${id}`, category: getTopicCategory() };
+    return {
+      title: getTopicTitle(),
+      url: `https://linux.do/t/${getTopicSlug()}/${id}`,
+      category: getTopicCategory(),
+      tags: getTopicTags(),
+    };
   }
 
   // ===================== Toast =====================
@@ -357,8 +378,22 @@
 
   // ===================== Topic Title Star =====================
   async function injectTopicStar(topicId, topicMeta) {
-    const titleContainer = document.querySelector('#topic-title, .title-wrapper, .topic-header-extra');
-    if (!titleContainer || titleContainer.querySelector(`.${STAR_CLASS}`)) return;
+    // If star already exists and is in correct position, skip
+    const existing = document.querySelector('.ld-star-topic-btn');
+    if (existing) {
+      // Verify it's still attached to DOM properly
+      if (existing.parentNode && document.contains(existing)) return;
+      // Otherwise remove orphan
+      existing.remove();
+    }
+
+    // Find the topic title element
+    const titleEl =
+      document.querySelector('#topic-title h1') ||
+      document.querySelector('.title-wrapper h1') ||
+      document.querySelector('#topic-title .fancy-title');
+
+    if (!titleEl) return;
 
     const isStarred = await StarStorage.isTopicStarred(topicId);
 
@@ -369,19 +404,22 @@
       onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber: null, topicMeta, postMeta: null }),
     });
     starBtn.classList.add('ld-star-topic-btn');
-    // Remove Discourse btn classes from topic star
     starBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
 
-    const title = titleContainer.querySelector('h1, .fancy-title');
-    if (title) title.appendChild(starBtn);
-    else titleContainer.appendChild(starBtn);
+    // Append INSIDE h1 (inline with title text, not below it)
+    titleEl.style.display = 'inline-flex';
+    titleEl.style.alignItems = 'center';
+    titleEl.style.gap = '6px';
+    titleEl.appendChild(starBtn);
   }
 
   async function updateTopicStarState(topicId) {
     const topicBtn = document.querySelector('.ld-star-topic-btn');
     if (!topicBtn) return;
-    const isStarred = await StarStorage.isTopicStarred(topicId);
-    topicBtn.classList.toggle(STAR_ACTIVE_CLASS, isStarred);
+    try {
+      const isStarred = await StarStorage.isTopicStarred(topicId);
+      topicBtn.classList.toggle(STAR_ACTIVE_CLASS, isStarred);
+    } catch {}
   }
 
   // ===================== Observer (robust for Discourse virtual scrolling) =====================
@@ -423,8 +461,8 @@
       }, { passive: true });
     }
 
-    // 3. Periodic fallback: every 2s check for missing stars (handles edge cases)
-    setInterval(checkForMissingStars, 2000);
+    // 3. Periodic fallback: every 5s check for missing stars
+    setInterval(checkForMissingStars, 5000);
   }
 
   let injectScheduled = false;
@@ -438,7 +476,7 @@
   }
 
   function checkForMissingStars() {
-    // Find any action bars that don't have our star button
+    // 1. Check post action bars
     const actionBars = document.querySelectorAll(
       '.topic-post article[data-post-id] .post-action-menu__row,' +
       '.topic-post article[data-post-id] nav.post-controls .actions,' +
@@ -446,44 +484,100 @@
     );
     for (const bar of actionBars) {
       if (!bar.querySelector(`.${STAR_CLASS}`)) {
-        // Found an action bar without star - need to inject
-        // Clear the injected flag on the parent article so injectStars picks it up
         const article = bar.closest('article[data-post-id]');
         if (article) article.removeAttribute('data-ld-star-injected');
       }
     }
-    // If any were cleared, re-run injection
-    if (document.querySelector('.topic-post article[data-post-id]:not([data-ld-star-injected])')) {
+
+    // 2. Check topic title star — retry if missing
+    const hasTitleStar = document.querySelector('.ld-star-topic-btn');
+    const hasTitleEl = document.querySelector('#topic-title h1, #topic-title .fancy-title');
+
+    let needsInject = !!document.querySelector('.topic-post article[data-post-id]:not([data-ld-star-injected])');
+
+    // If title element exists but no star, trigger re-inject
+    if (!hasTitleStar && hasTitleEl) {
+      needsInject = true;
+    }
+
+    if (needsInject) {
       injectStars();
     }
   }
 
   function watchRouteChanges() {
     let lastUrl = location.href;
-    const obs = new MutationObserver(() => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        setTimeout(() => {
-          document.querySelectorAll('[data-ld-star-injected]').forEach(el => el.removeAttribute('data-ld-star-injected'));
-          document.querySelectorAll(`.${STAR_CLASS}`).forEach(el => el.remove());
-          closePopup();
-          injectStars();
-        }, 600);
+
+    function onUrlChange() {
+      const newUrl = location.href;
+      if (newUrl === lastUrl) return;
+      lastUrl = newUrl;
+
+      // Only act on topic pages (/t/xxx/123)
+      if (!/\/t\/[^/]+\/\d+/.test(location.pathname)) {
+        // Not a topic page — clean up any leftover stars
+        document.querySelectorAll(`.${STAR_CLASS}`).forEach(el => el.remove());
+        return;
       }
-    });
+
+      // Topic page: wait for DOM to render, then inject
+      setTimeout(() => {
+        document.querySelectorAll('[data-ld-star-injected]').forEach(el => el.removeAttribute('data-ld-star-injected'));
+        document.querySelectorAll(`.${STAR_CLASS}`).forEach(el => el.remove());
+        closePopup();
+        waitAndInject();
+      }, 800);
+    }
+
+    // 1. Intercept pushState/replaceState (Discourse SPA navigation)
+    const origPush = history.pushState;
+    const origReplace = history.replaceState;
+    history.pushState = function (...args) {
+      origPush.apply(this, args);
+      onUrlChange();
+    };
+    history.replaceState = function (...args) {
+      origReplace.apply(this, args);
+      onUrlChange();
+    };
+
+    // 2. Popstate (browser back/forward)
+    window.addEventListener('popstate', onUrlChange);
+
+    // 3. Fallback: observe <title> changes (Discourse updates title on navigation)
     const titleEl = document.querySelector('title');
-    if (titleEl) obs.observe(titleEl, { childList: true });
-    window.addEventListener('popstate', () => setTimeout(injectStars, 500));
+    if (titleEl) {
+      const obs = new MutationObserver(onUrlChange);
+      obs.observe(titleEl, { childList: true });
+    }
+
+    // 4. Periodic URL check (ultimate fallback for edge cases)
+    setInterval(() => {
+      if (location.href !== lastUrl) onUrlChange();
+    }, 1000);
   }
 
   // ===================== Init =====================
+  function isTopicPage() {
+    return /\/t\/[^/]+\/\d+/.test(location.pathname);
+  }
+
   function init() {
+    // Always start route watching (for SPA navigation from homepage to topic)
+    watchRouteChanges();
+
+    // If already on a topic page, wait for posts and inject
+    if (isTopicPage()) {
+      waitAndInject();
+    }
+  }
+
+  function waitAndInject() {
     const wait = setInterval(() => {
       if (document.querySelector('.topic-post article[data-post-id]')) {
         clearInterval(wait);
         injectStars();
         observeNewPosts();
-        watchRouteChanges();
         try { chrome.runtime.sendMessage({ type: 'GET_BADGE_COUNT' }); } catch {}
       }
     }, 300);
