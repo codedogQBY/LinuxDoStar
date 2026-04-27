@@ -1,0 +1,337 @@
+/* ============================================================
+   LinuxDo Star - Content Styles
+   Design System:
+   - Primary accent: #f5a623 (amber/gold) for stars
+   - Header gradient: #667eea → #764ba2 (purple-blue)
+   - Font: inherit from Discourse (system font stack)
+   - Spacing: 4px base unit
+   - Border-radius: 4px (match Discourse)
+   - Transitions: 200ms ease (micro-interactions)
+   ============================================================ */
+
+/* ===== Star Button - Matches Discourse native btn style ===== */
+.ld-star-btn.btn.btn-icon.btn-flat {
+  /* Inherit Discourse's btn-flat sizing/spacing */
+  position: relative;
+}
+
+/* Star icon - match Discourse icon sizing */
+.ld-star-btn .ld-star-icon {
+  width: 1em;
+  height: 1em;
+  pointer-events: none;
+  transition: transform 200ms ease;
+}
+
+/* Unstarred: gray like other icons */
+.ld-star-btn .ld-star-icon path {
+  fill: none;
+  stroke: var(--primary-medium, #919191);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  transition: fill 200ms ease, stroke 200ms ease;
+}
+
+.ld-star-btn:hover .ld-star-icon path {
+  stroke: #eab308;
+  fill: rgba(234, 179, 8, 0.1);
+}
+
+/* Starred state */
+.ld-star-btn.ld-star-active .ld-star-icon path {
+  fill: #eab308;
+  stroke: #eab308;
+}
+
+.ld-star-btn.ld-star-active:hover .ld-star-icon path {
+  fill: #ca8a04;
+  stroke: #ca8a04;
+}
+
+/* Pop animation on star */
+@keyframes ld-star-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  70% { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+.ld-star-btn.ld-star-just-activated .ld-star-icon {
+  animation: ld-star-pop 350ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* ===== Topic Title Star (standalone, not in action bar) ===== */
+.ld-star-topic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 150ms ease;
+}
+.ld-star-topic-btn:hover {
+  background: rgba(234, 179, 8, 0.1);
+}
+.ld-star-topic-btn .ld-star-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* ===== Cascade Indicator (blue dot) ===== */
+.ld-star-btn.ld-star-cascade::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  background: #667eea;
+  border-radius: 50%;
+  border: 1px solid white;
+}
+
+/* ===== Collection Picker Popup ===== */
+.ld-star-popup {
+  background: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+  min-width: 200px;
+  max-width: 260px;
+  padding: 4px;
+  animation: ld-popup-in 150ms ease;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes ld-popup-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ld-star-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ld-star-popup-total {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Search in popup */
+.ld-star-popup-search-wrap {
+  padding: 4px 6px;
+}
+
+.ld-star-popup-search {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #e4e4e7;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #09090b;
+  outline: none;
+  background: #fafafa;
+  transition: border-color 100ms;
+}
+
+.ld-star-popup-search:focus {
+  border-color: #a1a1aa;
+  background: #fff;
+}
+
+.ld-star-popup-search::placeholder {
+  color: #a1a1aa;
+}
+
+/* Scrollable list */
+.ld-star-popup-list {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.ld-star-popup-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.ld-star-popup-list::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 2px;
+}
+
+.ld-star-popup-empty {
+  padding: 12px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.ld-star-popup-header {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ld-star-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #09090b;
+  text-align: left;
+  transition: background 80ms;
+}
+
+.ld-star-popup-item:hover {
+  background: #f4f4f5;
+}
+
+.ld-star-popup-item.active {
+  background: #f4f4f5;
+  font-weight: 500;
+}
+
+.ld-star-popup-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.ld-star-popup-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ld-star-popup-check {
+  color: #22c55e;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ld-star-popup-new {
+  border-top: 1px solid #f4f4f5;
+  margin-top: 2px;
+  padding-top: 7px;
+  color: #71717a;
+}
+
+.ld-star-popup-new:hover {
+  color: #09090b;
+}
+
+.ld-star-popup-input-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.ld-star-popup-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #e4e4e7;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #09090b;
+  outline: none;
+}
+
+.ld-star-popup-input:focus {
+  border-color: #a1a1aa;
+}
+
+.ld-star-popup-input-ok {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e4e4e7;
+  border-radius: 5px;
+  background: #18181b;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ld-star-popup-input-ok:hover {
+  background: #27272a;
+}
+
+/* ===== Toast Notification ===== */
+.ld-star-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: #1a1a2e;
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease, transform 250ms ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ld-star-toast.ld-star-toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.ld-star-toast-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+/* ===== Reduced Motion ===== */
+@media (prefers-reduced-motion: reduce) {
+  .ld-star-btn,
+  .ld-star-btn .ld-star-icon,
+  .ld-star-btn .ld-star-icon path,
+  .ld-star-toast {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
