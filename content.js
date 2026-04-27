@@ -236,19 +236,33 @@
       closePopup();
 
       try {
-        if (postNumber) {
-          await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, collectionId);
-        } else {
-          await StarStorage.toggleTopicStar(topicId, topicMeta, collectionId);
-        }
-        // If it was already in this collection, it toggled off
-        const isNowStarred = postNumber
+        const topicKey = `topic_${topicId}`;
+        const isAlreadyStarred = postNumber
           ? await StarStorage.isPostStarred(topicId, parseInt(postNumber))
           : await StarStorage.isTopicStarred(topicId);
 
-        btn.classList.toggle(STAR_ACTIVE_CLASS, isNowStarred);
-        const colName = collections.find(c => c.id === collectionId)?.name || '';
-        showToast(isNowStarred ? `已收藏到「${colName}」` : '已取消收藏');
+        if (isAlreadyStarred) {
+          // Already starred — move to the selected collection (don't toggle off)
+          if (postNumber) {
+            await StarStorage.moveToCollection(topicKey, collectionId, `post_${postNumber}`);
+          } else {
+            await StarStorage.moveToCollection(topicKey, collectionId, null);
+          }
+          btn.classList.add(STAR_ACTIVE_CLASS);
+          const col = (await StarStorage.getAll()).collections[collectionId];
+          showToast(`已移动到「${col?.name || '收藏夹'}」`);
+        } else {
+          // Not starred — star it into the selected collection
+          if (postNumber) {
+            await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, collectionId);
+          } else {
+            await StarStorage.toggleTopicStar(topicId, topicMeta, collectionId);
+          }
+          btn.classList.add(STAR_ACTIVE_CLASS);
+          const col = (await StarStorage.getAll()).collections[collectionId];
+          showToast(`已收藏到「${col?.name || '收藏夹'}」`);
+        }
+
         updateTopicStarState(topicId);
         try { chrome.runtime.sendMessage({ type: 'GET_BADGE_COUNT' }); } catch {}
       } catch (err) {
