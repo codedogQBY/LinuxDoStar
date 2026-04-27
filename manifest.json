@@ -16,7 +16,8 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "48": "icons/icon-48.svg"
+      "48": "icons/logo-128.png",
+      "128": "icons/logo-128.png"
     }
   },
   "background": {
@@ -24,7 +25,7 @@
     "type": "module"
   },
   "icons": {
-    "48": "icons/icon-48.svg",
-    "128": "icons/icon-48.svg"
+    "48": "icons/logo-128.png",
+    "128": "icons/logo-128.png"
   }
 }

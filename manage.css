@@ -18,7 +18,7 @@ body {
   display: flex; align-items: center; gap: 8px;
   padding: 14px 14px; border-bottom: 1px solid #e4e4e7;
 }
-.logo-icon { fill: #eab308; width: 16px; height: 16px; }
+.logo-img { width: 20px; height: 20px; border-radius: 50%; }
 .logo-text { font-size: 14px; font-weight: 600; }
 
 .nav { flex: 1; padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }

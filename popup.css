@@ -28,7 +28,7 @@ body {
   flex-shrink: 0;
 }
 .header-left { display: flex; align-items: center; gap: 6px; }
-.header-icon { fill: #eab308; width: 15px; height: 15px; }
+.header-logo { width: 18px; height: 18px; border-radius: 50%; }
 .header-title { font-size: 13px; font-weight: 600; }
 .header-stats { font-size: 11px; color: #a1a1aa; margin-left: 6px; }
 
