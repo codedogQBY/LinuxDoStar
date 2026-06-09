@@ -30,7 +30,7 @@ function bind() {
   $('importFile').addEventListener('change', handleImport);
   $('clearBtn').addEventListener('click', () => {
     if (!Object.keys(store.bookmarks).length) return;
-    showConfirm('清空全部收藏？不可恢复', async () => { store.bookmarks = {}; await StarStorage.save(store); reload(); });
+    showConfirm('清空全部收藏？不可恢复', async () => { await StarStorage.softDeleteAll(); reload(); });
   });
   $('newColBtn').addEventListener('click', createCol);
   $('syncBtn').addEventListener('click', openSyncPanel);
@@ -55,7 +55,10 @@ function renderNav() {
     counts.all++;
   }
   let nP = 0;
-  Object.values(store.bookmarks).forEach(b => nP += Object.keys(b.posts || {}).length);
+  Object.values(store.bookmarks).forEach(b => {
+    if (b._deleted) return;
+    nP += Object.values(b.posts || {}).filter(p => !p._deleted).length;
+  });
   $('totalText').textContent = `${counts.all} 帖 · ${nP} 评`;
 
   $('navList').innerHTML = `

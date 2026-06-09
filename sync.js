@@ -356,15 +356,12 @@ const SyncManager = {
     return result;
   },
 
-    return result;
-  },
-
   /**
-   * Return the newer of two objects based on updatedAt > starredAt > createdAt
+   * Return the newer of two objects based on updatedAt > _deletedAt > starredAt > createdAt
    */
   _newer(a, b) {
-    const ta = new Date(a.updatedAt || a.starredAt || a.createdAt || 0).getTime();
-    const tb = new Date(b.updatedAt || b.starredAt || b.createdAt || 0).getTime();
+    const ta = new Date(a.updatedAt || a._deletedAt || a.starredAt || a.createdAt || 0).getTime();
+    const tb = new Date(b.updatedAt || b._deletedAt || b.starredAt || b.createdAt || 0).getTime();
     return ta >= tb ? { ...a } : { ...b };
   },
 };

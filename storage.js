@@ -118,12 +118,15 @@ const StarStorage = {
   // === Bookmarks ===
   async isTopicStarred(topicId) {
     const store = await this.getAll();
-    return store.bookmarks[`topic_${topicId}`]?.starred || false;
+    const bk = store.bookmarks[`topic_${topicId}`];
+    return !!bk && !bk._deleted && bk.starred === true;
   },
 
   async isPostStarred(topicId, postNumber) {
     const store = await this.getAll();
-    return !!store.bookmarks[`topic_${topicId}`]?.posts?.[`post_${postNumber}`];
+    const bk = store.bookmarks[`topic_${topicId}`];
+    const post = bk?.posts?.[`post_${postNumber}`];
+    return !!bk && !bk._deleted && !!post && !post._deleted;
   },
 
   async toggleTopicStar(topicId, meta, collectionId) {
@@ -132,17 +135,19 @@ const StarStorage = {
     const now = new Date().toISOString();
     collectionId = collectionId || 'default';
 
-    if (store.bookmarks[key]?.starred) {
-      store.bookmarks[key].starred = false;
-      store.bookmarks[key].updatedAt = now;
-      if (!Object.keys(store.bookmarks[key].posts || {}).length) {
-        delete store.bookmarks[key];
+    const existing = store.bookmarks[key];
+
+    if (existing?.starred && !existing._deleted) {
+      existing.starred = false;
+      existing.updatedAt = now;
+      if (!this._hasActivePosts(existing.posts)) {
+        store.bookmarks[key] = this._topicTombstone(existing, now, topicId);
       }
       await this.save(store);
       this._notifyChange();
       return false;
     } else {
-      if (!store.bookmarks[key]) {
+      if (!existing || existing._deleted) {
         store.bookmarks[key] = {
           topicId, topicTitle: meta.title, topicUrl: meta.url,
           category: meta.category || '',
@@ -150,11 +155,11 @@ const StarStorage = {
           collectionId, tags: meta.tags || [], note: '', posts: {},
         };
       } else {
-        store.bookmarks[key].starred = true;
-        store.bookmarks[key].starredAt = now;
-        store.bookmarks[key].updatedAt = now;
-        store.bookmarks[key].topicTitle = meta.title || store.bookmarks[key].topicTitle;
-        if (collectionId) store.bookmarks[key].collectionId = collectionId;
+        existing.starred = true;
+        existing.starredAt = now;
+        existing.updatedAt = now;
+        existing.topicTitle = meta.title || existing.topicTitle;
+        if (collectionId) existing.collectionId = collectionId;
       }
       await this.save(store);
       this._notifyChange();
@@ -169,33 +174,36 @@ const StarStorage = {
     const now = new Date().toISOString();
     collectionId = collectionId || 'default';
 
-    if (!store.bookmarks[topicKey]) {
-      store.bookmarks[topicKey] = {
+    let topic = store.bookmarks[topicKey];
+    if (!topic || topic._deleted) {
+      topic = {
         topicId, topicTitle: topicMeta.title, topicUrl: topicMeta.url,
         category: topicMeta.category || '',
         starredAt: now, updatedAt: now, starred: true,
         collectionId, tags: topicMeta.tags || [], note: '', posts: {},
       };
+      store.bookmarks[topicKey] = topic;
     }
+    if (!topic.posts) topic.posts = {};
 
-    if (store.bookmarks[topicKey].posts[postKey]) {
-      delete store.bookmarks[topicKey].posts[postKey];
-      store.bookmarks[topicKey].updatedAt = now;
-      if (!store.bookmarks[topicKey].starred && !Object.keys(store.bookmarks[topicKey].posts).length) {
-        delete store.bookmarks[topicKey];
+    if (topic.posts[postKey] && !topic.posts[postKey]._deleted) {
+      topic.posts[postKey] = this._postTombstone(now);
+      topic.updatedAt = now;
+      if (!topic.starred && !this._hasActivePosts(topic.posts)) {
+        store.bookmarks[topicKey] = this._topicTombstone(topic, now, topicId);
       }
       await this.save(store);
       this._notifyChange();
       return false;
     } else {
-      store.bookmarks[topicKey].posts[postKey] = {
+      topic.posts[postKey] = {
         postNumber, postUrl: postMeta.url,
         author: postMeta.author, excerpt: postMeta.excerpt,
         starredAt: now, updatedAt: now,
         collectionId, tags: [], note: '',
       };
-      store.bookmarks[topicKey].updatedAt = now;
-      if (!store.bookmarks[topicKey].starred) store.bookmarks[topicKey].starred = true;
+      topic.updatedAt = now;
+      if (!topic.starred) topic.starred = true;
       await this.save(store);
       this._notifyChange();
       return true;
@@ -232,11 +240,7 @@ const StarStorage = {
   async softDeleteTopic(topicKey) {
     const store = await this.getAll();
     if (store.bookmarks[topicKey]) {
-      store.bookmarks[topicKey] = {
-        _deleted: true,
-        _deletedAt: new Date().toISOString(),
-        topicId: store.bookmarks[topicKey].topicId,
-      };
+      store.bookmarks[topicKey] = this._topicTombstone(store.bookmarks[topicKey]);
     }
     await this.save(store);
     this._notifyChange();
@@ -245,11 +249,22 @@ const StarStorage = {
   async softDeletePost(topicKey, postKey) {
     const store = await this.getAll();
     if (store.bookmarks[topicKey]?.posts?.[postKey]) {
-      store.bookmarks[topicKey].posts[postKey] = {
-        _deleted: true,
-        _deletedAt: new Date().toISOString(),
-      };
-      store.bookmarks[topicKey].updatedAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      store.bookmarks[topicKey].posts[postKey] = this._postTombstone(now);
+      store.bookmarks[topicKey].updatedAt = now;
+      if (!store.bookmarks[topicKey].starred && !this._hasActivePosts(store.bookmarks[topicKey].posts)) {
+        store.bookmarks[topicKey] = this._topicTombstone(store.bookmarks[topicKey], now);
+      }
+    }
+    await this.save(store);
+    this._notifyChange();
+  },
+
+  async softDeleteAll() {
+    const store = await this.getAll();
+    const now = new Date().toISOString();
+    for (const [key, bk] of Object.entries(store.bookmarks || {})) {
+      if (!bk._deleted) store.bookmarks[key] = this._topicTombstone(bk, now);
     }
     await this.save(store);
     this._notifyChange();
@@ -274,5 +289,26 @@ const StarStorage = {
         }
       }
     }
+  },
+
+  _hasActivePosts(posts = {}) {
+    return Object.values(posts).some(p => !p._deleted);
+  },
+
+  _topicTombstone(bookmark = {}, deletedAt = new Date().toISOString(), fallbackTopicId = null) {
+    return {
+      _deleted: true,
+      _deletedAt: deletedAt,
+      updatedAt: deletedAt,
+      topicId: bookmark.topicId ?? fallbackTopicId,
+    };
+  },
+
+  _postTombstone(deletedAt = new Date().toISOString()) {
+    return {
+      _deleted: true,
+      _deletedAt: deletedAt,
+      updatedAt: deletedAt,
+    };
   },
 };
