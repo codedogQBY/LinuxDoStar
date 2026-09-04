@@ -8,11 +8,13 @@
 
   const STAR_CLASS = 'ld-star-btn';
   const STAR_ACTIVE_CLASS = 'ld-star-active';
+  const TOPIC_EXPORT_CLASS = 'ld-md-topic-export-btn';
 
   // Star SVG matching Discourse's icon structure
   const STAR_SVG = `<svg class="ld-star-icon fa d-icon svg-icon svg-string" width="1em" height="1em" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
   </svg><span aria-hidden="true">\u200B</span>`;
+  const EXPORT_SVG = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span aria-hidden="true">\u200B</span>`;
 
   // ===================== DOM Utilities =====================
   function getTopicId() {
@@ -28,9 +30,10 @@
   function getTopicTitle() {
     for (const sel of ['#topic-title h1 a', '.fancy-title', '#topic-title h1', 'h1 .fancy-title']) {
       const el = document.querySelector(sel);
-      if (el?.textContent?.trim()) return el.textContent.trim();
+      const title = el?.textContent?.replace(/\u200B/g, '').trim();
+      if (title) return title;
     }
-    return document.title.split(' - ')[0]?.trim() || '未知标题';
+    return document.title.split(' - ')[0]?.replace(/\u200B/g, '').trim() || '未知标题';
   }
 
   function getTopicCategory() {
@@ -64,7 +67,169 @@
       url: `https://linux.do/t/${getTopicSlug()}/${id}`,
       category: getTopicCategory(),
       tags: getTopicTags(),
+      ...captureTopicMarkdown(),
     };
+  }
+
+  // ===================== Markdown Capture =====================
+  function captureTopicMarkdown() {
+    const article = document.querySelector('#post_1 article[data-post-id]');
+    return captureArticleMarkdown(article);
+  }
+
+  function captureArticleMarkdown(article) {
+    const cooked = article?.querySelector('.cooked');
+    const contentMarkdown = LinuxDoMarkdown.htmlToMarkdown(cooked);
+    return contentMarkdown
+      ? { contentMarkdown, contentCapturedAt: new Date().toISOString() }
+      : {};
+  }
+
+  // Cache image requests while scanning virtualized posts and exporting.
+  const imageAssetCache = new Map();
+
+  function getCachedImageAsset(url) {
+    let asset = imageAssetCache.get(url);
+    if (!asset) {
+      // Keep the original URL when an image cannot be archived, then retry
+      // the URL on a later export instead of caching a transient failure.
+      asset = fetchImageAsset(url)
+        .then(result => {
+          if (!result) imageAssetCache.delete(url);
+          return result;
+        })
+        .catch(() => {
+          imageAssetCache.delete(url);
+          return null;
+        });
+      imageAssetCache.set(url, asset);
+    }
+    return asset;
+  }
+
+  async function archiveMarkdownImages(meta) {
+    if (!meta?.contentMarkdown || meta._imagesArchived) return meta;
+    await LinuxDoMarkdown.archiveMarkdownImagesQueued([meta], getCachedImageAsset);
+    meta._imagesArchived = true;
+    return meta;
+  }
+
+  async function archiveMarkdownImagesQueued(metas, onProgress) {
+    return LinuxDoMarkdown.archiveMarkdownImagesQueued(metas, getCachedImageAsset, onProgress);
+  }
+
+  async function archiveForSave(...metas) {
+    const settings = await StarStorage.getSettings();
+    if (settings.autoArchiveMarkdown === false) return;
+    for (const meta of metas) await archiveMarkdownImages(meta);
+  }
+
+  async function fetchImageAsset(url) {
+    if (!url || url.startsWith('data:') || url.startsWith('asset://')) return null;
+    const response = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_ASSET', url });
+    if (!response?.ok) throw new Error(response?.message || 'Image request failed');
+    return response.asset || null;
+  }
+
+  function escapeHtml(value) {
+    const el = document.createElement('div');
+    el.textContent = value == null ? '' : String(value);
+    return el.innerHTML;
+  }
+
+  let topicExportInProgress = false;
+
+  function buildTopicExportMetas(posts) {
+    return posts.map(post => {
+      const container = document.createElement('div');
+      container.innerHTML = post.cooked || '';
+      return {
+        post,
+        contentMarkdown: LinuxDoMarkdown.htmlToMarkdown(
+          container,
+          'https://linux.do/t/' + getTopicSlug() + '/' + getTopicId(),
+        ),
+      };
+    }).filter(meta => meta.contentMarkdown);
+  }
+
+  function buildTopicExportSections(metas) {
+    return metas.map(({ post, contentMarkdown }) => {
+      const heading = Number(post.post_number) === 1
+        ? '# ' + getTopicTitle()
+        : '## #' + post.post_number + (post.username ? ' @' + post.username : '');
+      return heading + '\n\n' + contentMarkdown;
+    });
+  }
+
+  async function exportAllTopicPosts() {
+    if (topicExportInProgress) return;
+    topicExportInProgress = true;
+    setTopicExportBusy(true, '导出准备中...');
+    try {
+      showExportProgress('正在读取主贴和评论...');
+      const posts = await fetchTopicPostsForExport();
+      const metas = buildTopicExportMetas(posts);
+      setTopicExportBusy(true, '处理图片中...');
+      const imageResult = await archiveMarkdownImagesQueued(metas, (done, total) => {
+        if (total) showImageProgress(done, total);
+      });
+      const sections = buildTopicExportSections(metas);
+      if (!sections.length) return showToast('没有找到帖子正文', '⚠️');
+      downloadTopicZip(sections, imageResult.assets);
+      const warning = imageResult.failed ? '，' + imageResult.failed + ' 张图片保留原链接' : '';
+      showToast('已导出 ' + sections.length + ' 条帖子' + warning);
+    } catch (err) {
+      showToast(err.message || '导出失败', '⚠️');
+    } finally {
+      topicExportInProgress = false;
+      setTopicExportBusy(false);
+    }
+  }
+
+  function showImageProgress(done, total) {
+    setTopicExportBusy(true, '处理图片 ' + done + '/' + total + '...');
+    showExportProgress('正在处理图片 ' + done + '/' + total + '...');
+  }
+
+  function downloadTopicZip(sections, assets) {
+    const title = safeFilename(getTopicTitle());
+    const packageData = LinuxDoMarkdown.buildMarkdownZip(
+      sections.join('\n\n'),
+      assets,
+      title + '.md',
+    );
+    const zip = LinuxDoMarkdown.createZip(packageData.files);
+    downloadBlob(zip, title + '-all-posts.zip');
+  }
+
+  async function fetchTopicPostsForExport() {
+    const topicId = getTopicId();
+    const apiBase = `https://linux.do/t/${topicId}`;
+    const firstResponse = await fetch(`${apiBase}.json`, { credentials: 'include' });
+    if (!firstResponse.ok) throw new Error(`读取帖子失败 (${firstResponse.status})`);
+    const first = await firstResponse.json();
+    const stream = first.post_stream?.stream || [];
+    const postsById = new Map((first.post_stream?.posts || []).map(post => [String(post.id), post]));
+    const missing = stream.map(String).filter(id => !postsById.has(id));
+
+    for (let i = 0; i < missing.length; i += 20) {
+      const ids = missing.slice(i, i + 20);
+      const query = ids.map(id => `post_ids[]=${encodeURIComponent(id)}`).join('&');
+      const response = await fetch(`${apiBase}/posts.json?${query}`, { credentials: 'include' });
+      if (!response.ok) throw new Error(`读取评论页失败 (${response.status})`);
+      const data = await response.json();
+      for (const post of data.post_stream?.posts || []) postsById.set(String(post.id), post);
+    }
+
+    return (stream.length ? stream.map(String) : [...postsById.keys()])
+      .map(id => postsById.get(id))
+      .filter(Boolean)
+      .sort((a, b) => Number(a.post_number || 0) - Number(b.post_number || 0));
+  }
+
+  function safeFilename(value) {
+    return String(value || 'linuxdo-post').replace(/[\\/:*?"<>|]/g, '-').slice(0, 60) || 'linuxdo-post';
   }
 
   // ===================== Toast =====================
@@ -74,7 +239,12 @@
     toast.className = 'ld-star-toast';
     toast.setAttribute('role', 'status');
     toast.setAttribute('aria-live', 'polite');
-    toast.innerHTML = `<span class="ld-star-toast-icon">${icon}</span><span>${message}</span>`;
+    const iconEl = document.createElement('span');
+    iconEl.className = 'ld-star-toast-icon';
+    iconEl.textContent = icon;
+    const messageEl = document.createElement('span');
+    messageEl.textContent = message;
+    toast.append(iconEl, messageEl);
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('ld-star-toast-visible'));
     setTimeout(() => {
@@ -115,8 +285,6 @@
     const popup = document.createElement('div');
     popup.className = 'ld-star-popup';
 
-    const matchingCollections = [...collections]; // Will be filtered by search
-
     popup.innerHTML = `
       <div class="ld-star-popup-header">
         <span>收藏到</span>
@@ -155,9 +323,9 @@
       });
 
       listEl.innerHTML = sorted.map(c => `
-        <button class="ld-star-popup-item${c.id === currentColId ? ' active' : ''}" data-cid="${c.id}">
-          <span class="ld-star-popup-icon">${c.icon || '📁'}</span>
-          <span class="ld-star-popup-name">${c.name}</span>
+        <button class="ld-star-popup-item${c.id === currentColId ? ' active' : ''}" data-cid="${escapeHtml(c.id)}">
+          <span class="ld-star-popup-icon">${escapeHtml(c.icon || '📁')}</span>
+          <span class="ld-star-popup-name">${escapeHtml(c.name)}</span>
           ${c.id === currentColId ? '<span class="ld-star-popup-check">✓</span>' : ''}
         </button>
       `).join('');
@@ -210,6 +378,7 @@
           closePopup();
           // Auto-save to the new collection
           try {
+            await archiveForSave(topicMeta, postMeta);
             if (postNumber) {
               await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, newId);
             } else {
@@ -253,6 +422,7 @@
           showToast(`已移动到「${col?.name || '收藏夹'}」`);
         } else {
           // Not starred — star it into the selected collection
+          await archiveForSave(topicMeta, postMeta);
           if (postNumber) {
             await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, collectionId);
           } else {
@@ -268,6 +438,8 @@
       } catch (err) {
         if (err.message?.includes('Extension context invalidated')) {
           showToast('扩展已更新，请刷新页面', '⚠️');
+        } else {
+          showToast(err.message || '收藏失败', '⚠️');
         }
       }
     });
@@ -300,7 +472,7 @@
       if (activePopup) { closePopup(); return; }
 
       try {
-        const newState = await onDirectClick();
+        const newState = await onDirectClick(btn.classList.contains(STAR_ACTIVE_CLASS));
         btn.classList.toggle(STAR_ACTIVE_CLASS, newState);
         btn.setAttribute('title', newState ? '取消收藏' : '收藏');
 
@@ -313,6 +485,8 @@
       } catch (err) {
         if (err.message?.includes('Extension context invalidated')) {
           showToast('扩展已更新，请刷新页面', '⚠️');
+        } else {
+          showToast(err.message || '收藏失败', '⚠️');
         }
       }
     });
@@ -326,6 +500,46 @@
     });
 
     return btn;
+  }
+
+  function createMarkdownExportButton(ariaLabel, onClick, className = TOPIC_EXPORT_CLASS) {
+    const btn = document.createElement('button');
+    btn.className = `btn no-text btn-icon btn-flat ${className}`;
+    btn.innerHTML = EXPORT_SVG;
+    btn.setAttribute('aria-label', ariaLabel);
+    btn.setAttribute('title', ariaLabel);
+    btn.setAttribute('type', 'button');
+    btn.addEventListener('click', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+      await onClick();
+    });
+    return btn;
+  }
+
+  function setTopicExportBusy(busy, label = '导出帖子 ZIP（含全部评论）') {
+    document.querySelectorAll('.' + TOPIC_EXPORT_CLASS).forEach(btn => {
+      btn.disabled = busy;
+      btn.classList.toggle('ld-md-export-loading', busy);
+      btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+      btn.setAttribute('title', busy ? label : '导出帖子 ZIP（含全部评论）');
+      btn.setAttribute('aria-label', busy ? label : '导出帖子 ZIP（含全部评论）');
+      btn.innerHTML = busy
+        ? '<span class="ld-md-export-spinner" aria-hidden="true"></span>'
+        : EXPORT_SVG;
+    });
+  }
+
+  function showExportProgress(message) {
+    showToast(message, '⏳');
+  }
+
+  function downloadBlob(blob, filename) {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
   // ===================== Inject Stars =====================
@@ -358,7 +572,12 @@
       const contentEl = article.querySelector('.cooked');
       const author = authorEl?.textContent?.trim() || '';
       const excerpt = contentEl?.textContent?.trim().substring(0, 100) || '';
-      const postMeta = { url: `https://linux.do/t/${getTopicSlug()}/${topicId}/${postNumber}`, author, excerpt };
+      const postMeta = {
+        url: `https://linux.do/t/${getTopicSlug()}/${topicId}/${postNumber}`,
+        author,
+        excerpt,
+        ...captureArticleMarkdown(article),
+      };
 
       const isPostStarred = await StarStorage.isPostStarred(topicId, parseInt(postNumber));
 
@@ -368,23 +587,28 @@
         article.querySelector('nav.post-controls .actions') ||
         article.querySelector('.post-menu-area .actions') ||
         article.querySelector('.post-controls .actions');
-      if (!actionBar || actionBar.querySelector(`.${STAR_CLASS}`)) continue;
+      if (!actionBar) continue;
 
-      const starBtn = createStarButton({
-        isActive: isPostStarred,
-        ariaLabel: isPostStarred ? '取消收藏' : '收藏',
-        onDirectClick: async () => {
-          const newState = await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, 'default');
-          updateTopicStarState(topicId);
-          return newState;
-        },
-        onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber, topicMeta, postMeta }),
-      });
+      let starBtn = actionBar.querySelector(`.${STAR_CLASS}`);
+      if (!starBtn) {
+        starBtn = createStarButton({
+          isActive: isPostStarred,
+          ariaLabel: isPostStarred ? '取消收藏' : '收藏',
+          onDirectClick: async (wasActive) => {
+            if (!wasActive) await archiveForSave(topicMeta, postMeta);
+            const newState = await StarStorage.togglePostStar(topicId, parseInt(postNumber), topicMeta, postMeta, 'default');
+            updateTopicStarState(topicId);
+            return newState;
+          },
+          onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber, topicMeta, postMeta }),
+        });
 
-      // Insert before the first button (like Discourse's reaction button position)
-      const first = actionBar.firstElementChild;
-      if (first) actionBar.insertBefore(starBtn, first);
-      else actionBar.appendChild(starBtn);
+        // Insert before the first button (like Discourse's reaction button position)
+        const first = actionBar.firstElementChild;
+        if (first) actionBar.insertBefore(starBtn, first);
+        else actionBar.appendChild(starBtn);
+      }
+
     }
 
     injectTopicStar(topicId, topicMeta);
@@ -392,15 +616,6 @@
 
   // ===================== Topic Title Star =====================
   async function injectTopicStar(topicId, topicMeta) {
-    // If star already exists and is in correct position, skip
-    const existing = document.querySelector('.ld-star-topic-btn');
-    if (existing) {
-      // Verify it's still attached to DOM properly
-      if (existing.parentNode && document.contains(existing)) return;
-      // Otherwise remove orphan
-      existing.remove();
-    }
-
     // Find the topic title element
     const titleEl =
       document.querySelector('#topic-title h1') ||
@@ -409,22 +624,57 @@
 
     if (!titleEl) return;
 
-    const isStarred = await StarStorage.isTopicStarred(topicId);
+    // A scan can be triggered several times before the async storage read
+    // finishes. Keep only one star in the current title and remove stale
+    // stars left by a previous SPA route.
+    const existing = [...document.querySelectorAll('.ld-star-topic-btn')];
+    const currentStars = existing.filter(btn => titleEl.contains(btn));
+    existing.filter(btn => !titleEl.contains(btn)).forEach(btn => btn.remove());
+    if (currentStars.length) {
+      currentStars.slice(1).forEach(btn => btn.remove());
+      ensureTopicExportButton(titleEl);
+      return;
+    }
 
-    const starBtn = createStarButton({
-      isActive: isStarred,
-      ariaLabel: isStarred ? '取消收藏帖子' : '收藏帖子',
-      onDirectClick: () => StarStorage.toggleTopicStar(topicId, topicMeta, 'default'),
-      onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber: null, topicMeta, postMeta: null }),
-    });
-    starBtn.classList.add('ld-star-topic-btn');
-    starBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+    // Set the marker before awaiting storage so concurrent scans cannot race.
+    if (titleEl.dataset.ldStarTopicPending === 'true') return;
+    titleEl.dataset.ldStarTopicPending = 'true';
 
-    // Append INSIDE h1 (inline with title text, not below it)
-    titleEl.style.display = 'inline-flex';
-    titleEl.style.alignItems = 'center';
-    titleEl.style.gap = '6px';
-    titleEl.appendChild(starBtn);
+    try {
+      const isStarred = await StarStorage.isTopicStarred(topicId);
+
+      // The route or title may have changed while storage was being read.
+      if (getTopicId() !== topicId || !document.contains(titleEl)) return;
+      if (titleEl.querySelector('.ld-star-topic-btn')) return;
+
+      const starBtn = createStarButton({
+        isActive: isStarred,
+        ariaLabel: isStarred ? '取消收藏帖子' : '收藏帖子',
+        onDirectClick: async (wasActive) => {
+          if (!wasActive) await archiveForSave(topicMeta);
+          return StarStorage.toggleTopicStar(topicId, topicMeta, 'default');
+        },
+        onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber: null, topicMeta, postMeta: null }),
+      });
+      starBtn.classList.add('ld-star-topic-btn');
+      starBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+
+      // Append INSIDE h1 (inline with title text, not below it)
+      titleEl.style.display = 'inline-flex';
+      titleEl.style.alignItems = 'center';
+      titleEl.style.gap = '6px';
+      titleEl.appendChild(starBtn);
+      ensureTopicExportButton(titleEl);
+    } finally {
+      delete titleEl.dataset.ldStarTopicPending;
+    }
+  }
+
+  function ensureTopicExportButton(titleEl) {
+    if (titleEl.querySelector(`.${TOPIC_EXPORT_CLASS}`)) return;
+    const exportBtn = createMarkdownExportButton('导出帖子 ZIP（含全部评论）', exportAllTopicPosts, TOPIC_EXPORT_CLASS);
+    exportBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+    titleEl.appendChild(exportBtn);
   }
 
   async function updateTopicStarState(topicId) {
@@ -505,12 +755,13 @@
 
     // 2. Check topic title star — retry if missing
     const hasTitleStar = document.querySelector('.ld-star-topic-btn');
+    const hasTopicExport = document.querySelector('.ld-md-topic-export-btn');
     const hasTitleEl = document.querySelector('#topic-title h1, #topic-title .fancy-title');
 
     let needsInject = !!document.querySelector('.topic-post article[data-post-id]:not([data-ld-star-injected])');
 
     // If title element exists but no star, trigger re-inject
-    if (!hasTitleStar && hasTitleEl) {
+    if ((!hasTitleStar || !hasTopicExport) && hasTitleEl) {
       needsInject = true;
     }
 
@@ -530,14 +781,14 @@
       // Only act on topic pages (/t/xxx/123)
       if (!/\/t\/[^/]+\/\d+/.test(location.pathname)) {
         // Not a topic page — clean up any leftover stars
-        document.querySelectorAll(`.${STAR_CLASS}`).forEach(el => el.remove());
+        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}`).forEach(el => el.remove());
         return;
       }
 
       // Topic page: wait for DOM to render, then inject
       setTimeout(() => {
         document.querySelectorAll('[data-ld-star-injected]').forEach(el => el.removeAttribute('data-ld-star-injected'));
-        document.querySelectorAll(`.${STAR_CLASS}`).forEach(el => el.remove());
+        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}`).forEach(el => el.remove());
         closePopup();
         waitAndInject();
       }, 800);

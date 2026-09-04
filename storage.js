@@ -7,14 +7,19 @@
  *     "default":    { id, name, icon, color, createdAt, order },
  *     "col_abc123": { id, name, icon, color, createdAt, order }
  *   },
+ *   assets: {
+ *     "asset_<sha256>": { id, mimeType, dataUrl, originalUrl, originalUrls }
+ *   },
  *   bookmarks: {
  *     "topic_2066807": {
  *       topicId, topicTitle, topicUrl, category,
  *       starredAt, starred,
+ *       contentMarkdown: "帖子正文 Markdown",
+ *       contentCapturedAt: "2026-06-10T...",
  *       collectionId: "default",   // 所属收藏夹
  *       tags: [], note: "",
  *       posts: {
- *         "post_12": { postNumber, postUrl, author, excerpt, starredAt, tags, note, collectionId }
+ *         "post_12": { postNumber, postUrl, author, excerpt, contentMarkdown, contentCapturedAt, starredAt, tags, note, collectionId }
  *       }
  *     }
  *   }
@@ -22,6 +27,10 @@
  */
 
 const STORAGE_KEY = 'linuxdo_stars';
+const SETTINGS_KEY = 'linuxdo_settings';
+const DEFAULT_SETTINGS = {
+  autoArchiveMarkdown: true,
+};
 
 const DEFAULT_COLLECTION = {
   id: 'default',
@@ -62,6 +71,7 @@ const StarStorage = {
         // Ensure structure
         if (!d.collections) d.collections = { default: { ...DEFAULT_COLLECTION } };
         if (!d.bookmarks) d.bookmarks = {};
+        if (!d.assets) d.assets = {};
         if (!d.collections.default) d.collections.default = { ...DEFAULT_COLLECTION };
         r(d);
       });
@@ -69,7 +79,37 @@ const StarStorage = {
   },
 
   async save(store) {
-    return new Promise(r => chrome.storage.local.set({ [STORAGE_KEY]: store }, r));
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [STORAGE_KEY]: store }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      });
+    });
+  },
+
+  async saveAndNotify(store) {
+    await this.save(store);
+    this._notifyChange();
+  },
+
+  async getSettings() {
+    return new Promise(resolve => {
+      chrome.storage.local.get([SETTINGS_KEY], result => {
+        resolve({ ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) });
+      });
+    });
+  },
+
+  async saveSettings(updates) {
+    const settings = { ...(await this.getSettings()), ...updates };
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [SETTINGS_KEY]: settings }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve(settings);
+      });
+    });
   },
 
   // === Collections ===
@@ -89,6 +129,7 @@ const StarStorage = {
       createdAt: now, updatedAt: now, order,
     };
     await this.save(store);
+    this._notifyChange();
     return id;
   },
 
@@ -98,21 +139,30 @@ const StarStorage = {
       Object.assign(store.collections[id], updates);
       store.collections[id].updatedAt = new Date().toISOString();
       await this.save(store);
+      this._notifyChange();
     }
   },
 
   async deleteCollection(id) {
     if (id === 'default') return; // Cannot delete default
     const store = await this.getAll();
+    const now = new Date().toISOString();
     delete store.collections[id];
     // Move bookmarks in this collection to default
     for (const bk of Object.values(store.bookmarks)) {
-      if (bk.collectionId === id) bk.collectionId = 'default';
+      if (bk.collectionId === id) {
+        bk.collectionId = 'default';
+        bk.updatedAt = now;
+      }
       for (const p of Object.values(bk.posts || {})) {
-        if (p.collectionId === id) p.collectionId = 'default';
+        if (p.collectionId === id) {
+          p.collectionId = 'default';
+          p.updatedAt = now;
+        }
       }
     }
     await this.save(store);
+    this._notifyChange();
   },
 
   // === Bookmarks ===
@@ -131,6 +181,8 @@ const StarStorage = {
 
   async toggleTopicStar(topicId, meta, collectionId) {
     const store = await this.getAll();
+    const settings = await this.getSettings();
+    const shouldArchive = settings.autoArchiveMarkdown !== false;
     const key = `topic_${topicId}`;
     const now = new Date().toISOString();
     collectionId = collectionId || 'default';
@@ -147,10 +199,15 @@ const StarStorage = {
       this._notifyChange();
       return false;
     } else {
+      if (shouldArchive) this._mergeAssets(store, meta?.assets);
       if (!existing || existing._deleted) {
         store.bookmarks[key] = {
           topicId, topicTitle: meta.title, topicUrl: meta.url,
           category: meta.category || '',
+          ...(shouldArchive ? {
+            contentMarkdown: meta.contentMarkdown || '',
+            contentCapturedAt: meta.contentCapturedAt || '',
+          } : {}),
           starredAt: now, updatedAt: now, starred: true,
           collectionId, tags: meta.tags || [], note: '', posts: {},
         };
@@ -159,6 +216,10 @@ const StarStorage = {
         existing.starredAt = now;
         existing.updatedAt = now;
         existing.topicTitle = meta.title || existing.topicTitle;
+        if (shouldArchive && meta.contentMarkdown) {
+          existing.contentMarkdown = meta.contentMarkdown;
+          existing.contentCapturedAt = meta.contentCapturedAt || now;
+        }
         if (collectionId) existing.collectionId = collectionId;
       }
       await this.save(store);
@@ -169,6 +230,8 @@ const StarStorage = {
 
   async togglePostStar(topicId, postNumber, topicMeta, postMeta, collectionId) {
     const store = await this.getAll();
+    const settings = await this.getSettings();
+    const shouldArchive = settings.autoArchiveMarkdown !== false;
     const topicKey = `topic_${topicId}`;
     const postKey = `post_${postNumber}`;
     const now = new Date().toISOString();
@@ -179,12 +242,20 @@ const StarStorage = {
       topic = {
         topicId, topicTitle: topicMeta.title, topicUrl: topicMeta.url,
         category: topicMeta.category || '',
+        ...(shouldArchive ? {
+          contentMarkdown: topicMeta.contentMarkdown || '',
+          contentCapturedAt: topicMeta.contentCapturedAt || '',
+        } : {}),
         starredAt: now, updatedAt: now, starred: true,
         collectionId, tags: topicMeta.tags || [], note: '', posts: {},
       };
       store.bookmarks[topicKey] = topic;
     }
     if (!topic.posts) topic.posts = {};
+    if (shouldArchive && topicMeta.contentMarkdown) {
+      topic.contentMarkdown = topicMeta.contentMarkdown;
+      topic.contentCapturedAt = topicMeta.contentCapturedAt || now;
+    }
 
     if (topic.posts[postKey] && !topic.posts[postKey]._deleted) {
       topic.posts[postKey] = this._postTombstone(now);
@@ -196,9 +267,17 @@ const StarStorage = {
       this._notifyChange();
       return false;
     } else {
+      if (shouldArchive) {
+        this._mergeAssets(store, topicMeta?.assets);
+        this._mergeAssets(store, postMeta?.assets);
+      }
       topic.posts[postKey] = {
         postNumber, postUrl: postMeta.url,
         author: postMeta.author, excerpt: postMeta.excerpt,
+        ...(shouldArchive ? {
+          contentMarkdown: postMeta.contentMarkdown || '',
+          contentCapturedAt: postMeta.contentCapturedAt || '',
+        } : {}),
         starredAt: now, updatedAt: now,
         collectionId, tags: [], note: '',
       };
@@ -231,6 +310,27 @@ const StarStorage = {
   // Notify background to trigger auto-sync
   _notifyChange() {
     try { chrome.runtime.sendMessage({ type: 'DATA_CHANGED' }); } catch {}
+  },
+
+  _mergeAssets(store, assets = {}) {
+    if (!assets || !Object.keys(assets).length) return;
+    if (!store.assets) store.assets = {};
+    for (const [id, asset] of Object.entries(assets)) {
+      if (!asset) continue;
+      const existing = store.assets[id];
+      if (!existing) {
+        store.assets[id] = {
+          ...asset,
+          originalUrls: [...new Set(asset.originalUrls || (asset.originalUrl ? [asset.originalUrl] : []))],
+        };
+        continue;
+      }
+      existing.originalUrls = [...new Set([
+        ...(existing.originalUrls || (existing.originalUrl ? [existing.originalUrl] : [])),
+        ...(asset.originalUrls || (asset.originalUrl ? [asset.originalUrl] : [])),
+      ])];
+      if (!existing.originalUrl && existing.originalUrls[0]) existing.originalUrl = existing.originalUrls[0];
+    }
   },
 
   /**

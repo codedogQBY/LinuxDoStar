@@ -9,13 +9,17 @@
 ### 核心收藏
 - **帖子收藏** — 标题旁 + 操作栏都有星标按钮，一键收藏
 - **评论收藏** — 每条评论操作栏（❤️ 旁边）都有星标，收藏评论自动关联帖子
+- **自动 Markdown 归档** — 点击收藏时抓取当前帖子/评论正文并转成 Markdown
+- **图片存档** — 收藏时普通图片按内容哈希转成 Base64 资源并去重，表情图片跳过归档并保留原始链接
+- **Markdown 导出** — 页面只提供一个帖子导出按钮，生成包含主贴和全部评论的 ZIP；Markdown 与图片分开存放，图片按队列处理并显示进度
+- **归档设置** — 管理页「收藏设置」可开关收藏时的正文存档，默认开启；存档只写入收藏数据，不会自动下载文件
 - **收藏夹分类** — 创建多个收藏夹（技术、职场、生活…），归类管理
 - **悬浮选择器** — 鼠标悬停星标 500ms 弹出收藏夹选择器，支持搜索和快速新建
 
 ### 管理
 - **Popup 预览** — 点击扩展图标快速浏览收藏，按收藏夹分组，可折叠展开
 - **独立管理页** — 完整的收藏管理：搜索、排序、标签、备注、详情面板
-- **导入/导出** — JSON 格式，方便备份和迁移
+- **导入/导出** — 所有导出入口统一生成包含 Markdown 与图片的 ZIP 文档；导入仍支持 JSON 备份文件
 
 ### 同步
 - **GitHub Gist 同步** — 通过私有 Gist 跨设备同步收藏数据
@@ -54,6 +58,7 @@
 ```
 LinuxDoStar/
 ├── manifest.json       # Chrome MV3 扩展配置
+├── markdown.js         # HTML → Markdown 转换与链接处理
 ├── storage.js          # 数据结构 & 持久化
 ├── sync.js             # GitHub Gist 同步模块
 ├── background.js       # Service Worker (badge + 同步调度)
@@ -72,12 +77,23 @@ LinuxDoStar/
     "default": { "id": "default", "name": "默认收藏夹", "icon": "⭐", ... },
     "col_xxx": { "id": "col_xxx", "name": "技术文章", "icon": "💻", ... }
   },
+  "assets": {
+    "asset_<sha256>": {
+      "id": "asset_<sha256>",
+      "mimeType": "image/png",
+      "dataUrl": "data:image/png;base64,...",
+      "originalUrl": "https://linux.do/uploads/...",
+      "originalUrls": ["https://linux.do/uploads/..." ]
+    }
+  },
   "bookmarks": {
     "topic_2066807": {
       "topicId": 2066807,
       "topicTitle": "帖子标题",
       "topicUrl": "https://linux.do/t/topic/2066807",
       "collectionId": "default",
+      "contentMarkdown": "帖子正文 Markdown（图片使用 asset:// 引用）...",
+      "contentCapturedAt": "2026-06-10T11:30:00.000Z",
       "starred": true,
       "tags": ["标签"],
       "note": "我的备注",
@@ -85,7 +101,9 @@ LinuxDoStar/
         "post_12": {
           "postNumber": 12,
           "author": "username",
-          "excerpt": "评论内容摘要..."
+          "excerpt": "评论内容摘要...",
+          "contentMarkdown": "评论正文 Markdown（图片使用 asset:// 引用）...",
+          "contentCapturedAt": "2026-06-10T11:30:00.000Z"
         }
       }
     }
@@ -112,9 +130,11 @@ Discourse 使用虚拟滚动回收 DOM 节点，传统 MutationObserver 不够�
 | 权限 | 用途 |
 |------|------|
 | `storage` | 本地存储收藏数据 |
+| `unlimitedStorage` | 为 Base64 图片归档提供更大的本地存储配额 |
 | `activeTab` | 读取当前页面信息 |
 | `alarms` | 定时同步调度 |
-| `linux.do` | 注入收藏按钮 |
+| `linux.do` | 注入收藏按钮、读取帖子与图片 |
+| `http://*/*` / `https://*/*` | 通过后台请求跨域图片并归档 |
 | `api.github.com` | Gist 同步 API |
 
 ## License

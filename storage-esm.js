@@ -33,6 +33,7 @@ export const StarStorage = {
         }
         if (!d.collections) d.collections = { default: { ...DEFAULT_COLLECTION } };
         if (!d.bookmarks) d.bookmarks = {};
+        if (!d.assets) d.assets = {};
         if (!d.collections.default) d.collections.default = { ...DEFAULT_COLLECTION };
         r(d);
       });
@@ -40,6 +41,12 @@ export const StarStorage = {
   },
 
   async save(store) {
-    return new Promise(r => chrome.storage.local.set({ [STORAGE_KEY]: store }, r));
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [STORAGE_KEY]: store }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      });
+    });
   },
 };

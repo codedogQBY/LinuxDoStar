@@ -178,6 +178,13 @@ body {
 .card-btn.del:hover { background: #fef2f2; color: #ef4444; }
 .card-btn svg { width: 14px; height: 14px; pointer-events: none; }
 .card-btn svg * { pointer-events: none; }
+.card-btn.export-loading { cursor: wait; opacity: .65; }
+.export-spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: manage-export-spin 700ms linear infinite;
+}
+@keyframes manage-export-spin { to { transform: rotate(360deg); } }
 
 /* Card posts (collapsed by default) */
 .card-posts { display: none; }

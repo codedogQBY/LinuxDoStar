@@ -91,6 +91,46 @@
   height: 20px;
 }
 
+.ld-md-topic-export-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  vertical-align: middle;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--primary-medium, #919191);
+}
+.ld-md-topic-export-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--primary, #3d3d3d);
+}
+.ld-md-topic-export-btn > svg {
+  width: 18px;
+  height: 18px;
+}
+.ld-md-topic-export-btn.ld-md-export-loading {
+  cursor: wait;
+  opacity: 0.65;
+}
+.ld-md-export-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ld-md-export-spin 700ms linear infinite;
+}
+@keyframes ld-md-export-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ===== Cascade Indicator (blue dot) ===== */
 .ld-star-btn.ld-star-cascade::after {
   content: '';

@@ -6,6 +6,7 @@
 let store = { collections: {}, bookmarks: {} };
 const openCols = new Set();   // open collection ids
 const openTopics = new Set(); // open topic keys (showing posts)
+let exportInProgress = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
@@ -32,18 +33,49 @@ function bind() {
   $('search').addEventListener('input', debounce(render, 120));
   $('openManage').addEventListener('click', openManagePage);
   $('openManage2').addEventListener('click', openManagePage);
-  $('exportBtn').addEventListener('click', doExport);
+  $('exportBtn').addEventListener('click', exportSavedTopics);
   $('list').addEventListener('click', handleClick);
 }
 
 function openManagePage() { chrome.tabs.create({ url: chrome.runtime.getURL('manage.html') }); }
 
-function doExport() {
-  if (!Object.keys(store.bookmarks).length) return;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), v: '1.2', data: store }, null, 2)], { type: 'application/json' }));
-  a.download = `linuxdo-stars-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click(); URL.revokeObjectURL(a.href);
+async function exportSavedTopics() {
+  const topics = Object.values(store.bookmarks || {}).filter(topic => !topic._deleted);
+  if (!topics.length || exportInProgress) return;
+  exportInProgress = true;
+  const button = $('exportBtn');
+  const originalLabel = button.innerHTML;
+  button.disabled = true;
+  button.textContent = '导出准备中...';
+  try {
+    const packageData = await LinuxDoMarkdown.buildSavedTopicsArchive(
+      store,
+      requestImageAsset,
+      (done, total) => { if (total) button.textContent = `处理图片 ${done}/${total}`; },
+    );
+    const zip = LinuxDoMarkdown.createZip(packageData.files);
+    const date = new Date().toISOString().slice(0, 10);
+    downloadBlob(zip, `linuxdo-stars-${date}.zip`);
+  } catch (error) {
+    console.error('[LinuxDo Star] Export failed', error);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = originalLabel;
+    exportInProgress = false;
+  }
+}
+
+async function requestImageAsset(url) {
+  const response = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_ASSET', url });
+  return response?.ok ? response.asset : null;
+}
+
+function downloadBlob(blob, filename) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 // ==================== Click Handler ====================

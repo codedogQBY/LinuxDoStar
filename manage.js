@@ -9,6 +9,7 @@ let currentSort = 'newest';
 const expanded = new Set();
 let batchMode = false;
 const selected = new Set(); // selected bookmark keys for batch delete
+const topicExportsInProgress = new Set();
 
 document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
@@ -21,11 +22,7 @@ async function reload() { store = await StarStorage.getAll(); renderNav(); rende
 function bind() {
   $('searchInput').addEventListener('input', debounce(render, 150));
   $('sortSelect').addEventListener('change', e => { currentSort = e.target.value; render(); });
-  $('exportBtn').addEventListener('click', () => {
-    if (!Object.keys(store.bookmarks).length) return;
-    dl(JSON.stringify({ exportedAt: new Date().toISOString(), v: '1.2', data: store }, null, 2),
-      `linuxdo-stars-${new Date().toISOString().slice(0, 10)}.json`);
-  });
+  $('exportBtn').addEventListener('click', exportSavedTopics);
   $('importBtn').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', handleImport);
   $('clearBtn').addEventListener('click', () => {
@@ -34,6 +31,7 @@ function bind() {
   });
   $('newColBtn').addEventListener('click', createCol);
   $('syncBtn').addEventListener('click', openSyncPanel);
+  $('settingsBtn').addEventListener('click', openSettingsPanel);
   $('navList').addEventListener('click', handleNav);
   $('content').addEventListener('click', handleContent);
   $('panelClose').addEventListener('click', closePanel);
@@ -114,6 +112,25 @@ function editCol(cid) {
   showPanel();
 }
 
+async function openSettingsPanel() {
+  const settings = await StarStorage.getSettings();
+  $('panelTitle').textContent = '收藏设置';
+  $('panelBody').innerHTML = `
+    <label class="sync-toggle">
+      <input type="checkbox" id="autoArchiveMarkdown" ${settings.autoArchiveMarkdown !== false ? 'checked' : ''}>
+      收藏时自动保存 Markdown 正文
+    </label>
+    <div class="sync-info" style="margin-top:12px;">
+      开启后，收藏主贴或评论时会把正文存入收藏数据；图片会按内容去重保存。<br>
+      关闭后仍可在帖子页手动导出 ZIP。
+    </div>
+  `;
+  $('autoArchiveMarkdown').onchange = async e => {
+    await StarStorage.saveSettings({ autoArchiveMarkdown: e.target.checked });
+  };
+  showPanel();
+}
+
 // ==================== Content ====================
 async function handleContent(e) {
   // Batch mode checkbox
@@ -171,6 +188,8 @@ async function handleContent(e) {
     openTopicDetail(act.dataset.key);
   } else if (a === 'detail-p') {
     openPostDetail(act.dataset.tkey, act.dataset.pkey);
+  } else if (a === 'export-all') {
+    await exportSavedTopicAll(act.dataset.key, act);
   } else if (a === 'move') {
     openMove(act.dataset.tkey, act.dataset.pkey);
   }
@@ -180,30 +199,12 @@ async function handleContent(e) {
 const CHEVRON = `<svg class="card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 const X = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 const FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+const EXPORT_ALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>`;
 
 function render() {
   const q = $('searchInput').value.toLowerCase().trim();
   const box = $('content');
-
-  let items = [];
-  for (const [key, bk] of Object.entries(store.bookmarks)) {
-    if (bk._deleted) continue; // Skip tombstones
-    if (currentView !== 'all' && (bk.collectionId || 'default') !== currentView) continue;
-    let match = !q;
-    if (q) {
-      if (bk.topicTitle?.toLowerCase().includes(q)) match = true;
-      if ((bk.tags || []).some(t => t.toLowerCase().includes(q))) match = true;
-      if (bk.note?.toLowerCase().includes(q)) match = true;
-      if (Object.values(bk.posts || {}).some(p => p.author?.toLowerCase().includes(q) || p.excerpt?.toLowerCase().includes(q))) match = true;
-    }
-    if (match) items.push({ key, ...bk });
-  }
-
-  items.sort((a, b) => {
-    if (currentSort === 'newest') return new Date(b.starredAt || 0) - new Date(a.starredAt || 0);
-    if (currentSort === 'oldest') return new Date(a.starredAt || 0) - new Date(b.starredAt || 0);
-    return (a.topicTitle || '').localeCompare(b.topicTitle || '', 'zh-CN');
-  });
+  const items = getVisibleItems();
 
   if (!items.length) {
     box.innerHTML = `<div class="empty"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><h3>${q ? '无匹配' : '暂无收藏'}</h3><p>在 linux.do 帖子页点击 ★ 收藏</p></div>`;
@@ -231,6 +232,7 @@ function render() {
           </div>
         </div>
         <div class="card-actions">
+          <button class="card-btn" data-act="export-all" data-key="${t.key}" title="导出帖子 ZIP（含全部评论）">${EXPORT_ALL}</button>
           <button class="card-btn" data-act="move" data-tkey="${t.key}" title="移动">${FOLDER}</button>
           <button class="card-btn del" data-act="del-t" data-key="${t.key}" title="删除">${X}</button>
         </div>
@@ -250,6 +252,32 @@ function render() {
         </div>`).join('')}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function getVisibleItems() {
+  const q = $('searchInput').value.toLowerCase().trim();
+  const items = [];
+
+  for (const [key, bk] of Object.entries(store.bookmarks)) {
+    if (bk._deleted) continue; // Skip tombstones
+    if (currentView !== 'all' && (bk.collectionId || 'default') !== currentView) continue;
+    let match = !q;
+    if (q) {
+      if (bk.topicTitle?.toLowerCase().includes(q)) match = true;
+      if ((bk.tags || []).some(t => t.toLowerCase().includes(q))) match = true;
+      if (bk.note?.toLowerCase().includes(q)) match = true;
+      if (Object.values(bk.posts || {}).some(p => p.author?.toLowerCase().includes(q) || p.excerpt?.toLowerCase().includes(q))) match = true;
+    }
+    if (match) items.push({ key, ...bk });
+  }
+
+  items.sort((a, b) => {
+    if (currentSort === 'newest') return new Date(b.starredAt || 0) - new Date(a.starredAt || 0);
+    if (currentSort === 'oldest') return new Date(a.starredAt || 0) - new Date(b.starredAt || 0);
+    return (a.topicTitle || '').localeCompare(b.topicTitle || '', 'zh-CN');
+  });
+
+  return items;
 }
 
 // ==================== Panel: Detail / Move ====================
@@ -301,7 +329,8 @@ function bindTagNote(key, type, pkey) {
 
   $('panelBody').querySelectorAll('.tag-pill-x').forEach(x => x.onclick = async () => {
     target.tags = (target.tags || []).filter(t => t !== x.dataset.tag);
-    await StarStorage.save(store);
+    target.updatedAt = new Date().toISOString();
+    await StarStorage.saveAndNotify(store);
     if (type === 'topic') openTopicDetail(key); else openPostDetail(key, pkey);
   });
 
@@ -311,13 +340,15 @@ function bindTagNote(key, type, pkey) {
     if (!target.tags) target.tags = [];
     const v = e.target.value.trim();
     if (!target.tags.includes(v)) target.tags.push(v);
-    await StarStorage.save(store);
+    target.updatedAt = new Date().toISOString();
+    await StarStorage.saveAndNotify(store);
     if (type === 'topic') openTopicDetail(key); else openPostDetail(key, pkey);
   };
 
   $('saveBtn').onclick = async () => {
     target.note = $('noteIn').value.trim();
-    await StarStorage.save(store);
+    target.updatedAt = new Date().toISOString();
+    await StarStorage.saveAndNotify(store);
     closePanel(); render();
   };
 }
@@ -345,15 +376,208 @@ async function handleImport(e) {
   try {
     const j = JSON.parse(await f.text()); const imp = j.data || j; let n = 0;
     if (imp.collections) Object.assign(store.collections, imp.collections);
+    if (imp.assets) Object.assign(store.assets, imp.assets);
     const bks = imp.bookmarks || imp;
     for (const [k, v] of Object.entries(bks)) {
       if (!k.startsWith('topic_')) continue;
       if (!store.bookmarks[k]) { store.bookmarks[k] = v; n++; }
-      else { for (const [pk, pv] of Object.entries(v.posts || {})) { if (!store.bookmarks[k].posts[pk]) { store.bookmarks[k].posts[pk] = pv; n++; } } }
+      else {
+        if (!store.bookmarks[k].posts) store.bookmarks[k].posts = {};
+        for (const [pk, pv] of Object.entries(v.posts || {})) {
+          if (!store.bookmarks[k].posts[pk]) { store.bookmarks[k].posts[pk] = pv; n++; }
+        }
+      }
     }
-    await StarStorage.save(store); reload(); alert(`导入成功！新增 ${n} 条`);
+    await StarStorage.saveAndNotify(store); reload(); alert(`导入成功！新增 ${n} 条`);
   } catch { alert('文件格式错误'); }
   e.target.value = '';
+}
+
+async function exportSavedTopicAll(key, exportButton) {
+  const topic = store.bookmarks[key];
+  if (!topic || topic._deleted || topicExportsInProgress.has(key)) return;
+  topicExportsInProgress.add(key);
+  markExportButtonBusy(exportButton, '导出准备中...');
+  try {
+    const posts = await loadTopicPostsForExport(topic);
+    const metas = buildSavedTopicExportMetas(topic, posts);
+    if (!metas.length) return alert('没有找到帖子正文');
+    const imageResult = await archiveTopicImages(metas, exportButton);
+    const { title, packageData } = buildSavedTopicPackage(topic, metas, imageResult.assets);
+    downloadBlob(LinuxDoMarkdown.createZip(packageData.files), `${title}-all-posts.zip`);
+    if (imageResult.failed) alert(`${imageResult.failed} 张图片未能归档，已保留原链接`);
+  } catch (err) {
+    alert(`导出失败：${err.message}`);
+  } finally {
+    topicExportsInProgress.delete(key);
+    restoreExportButton(exportButton);
+  }
+}
+
+async function loadTopicPostsForExport(topic) {
+  try {
+    const posts = await fetchTopicPosts(topic);
+    return posts.length ? posts : buildArchivedTopicPosts(topic);
+  } catch (error) {
+    const archivedPosts = buildArchivedTopicPosts(topic);
+    if (archivedPosts.length) return archivedPosts;
+    throw error;
+  }
+}
+
+function buildArchivedTopicPosts(topic) {
+  return [...collectArchivedTopicContent(topic).entries()]
+    .sort(([firstNumber], [secondNumber]) => firstNumber - secondNumber)
+    .map(([postNumber, post]) => ({ post_number: postNumber, ...post }));
+}
+
+function collectArchivedTopicContent(topic) {
+  const archived = new Map();
+  if (topic.contentMarkdown) archived.set(1, { contentMarkdown: topic.contentMarkdown });
+  for (const post of Object.values(topic.posts || {})) {
+    if (post._deleted || !post.contentMarkdown) continue;
+    archived.set(Number(post.postNumber), { contentMarkdown: post.contentMarkdown, username: post.author || '' });
+  }
+  return archived;
+}
+
+function buildSavedTopicExportMetas(topic, posts) {
+  const archived = collectArchivedTopicContent(topic);
+  return posts.map(post => {
+    const saved = archived.get(Number(post.post_number));
+    const contentMarkdown = saved?.contentMarkdown || postToMarkdown(post, topic.topicUrl);
+    return contentMarkdown
+      ? { post, contentMarkdown, username: saved?.username || post.username || '' }
+      : null;
+  }).filter(Boolean);
+}
+
+function archiveTopicImages(metas, exportButton) {
+  return LinuxDoMarkdown.archiveMarkdownImagesQueued(
+    metas,
+    requestImageAsset,
+    (done, total) => { if (total) markExportButtonBusy(exportButton, `处理图片 ${done}/${total}...`); },
+  );
+}
+
+function buildSavedTopicPackage(topic, metas, assets) {
+  const title = safeFilePart(topic.topicTitle || 'topic');
+  const sections = metas.map(({ post, contentMarkdown, username }) => {
+    const heading = Number(post.post_number) === 1
+      ? `# ${mdLine(topic.topicTitle || '未知标题')}`
+      : `## #${post.post_number}${username ? ` @${mdLine(username)}` : ''}`;
+    return `${heading}\n\n${contentMarkdown}`;
+  });
+  return {
+    title,
+    packageData: LinuxDoMarkdown.buildMarkdownZip(
+      sections.join('\n\n'),
+      LinuxDoMarkdown.mergeAssetMaps(store.assets || {}, assets),
+      `${title}.md`,
+    ),
+  };
+}
+
+function markExportButtonBusy(button, label) {
+  if (!button) return;
+  button.disabled = true;
+  button.classList.add('export-loading');
+  button.setAttribute('aria-busy', 'true');
+  button.setAttribute('aria-label', label);
+  button.setAttribute('title', label);
+  button.innerHTML = '<span class="export-spinner" aria-hidden="true"></span>';
+}
+
+function restoreExportButton(button) {
+  if (!button) return;
+  button.disabled = false;
+  button.classList.remove('export-loading');
+  button.setAttribute('aria-busy', 'false');
+  button.setAttribute('aria-label', '导出帖子 ZIP（含全部评论）');
+  button.setAttribute('title', '导出帖子 ZIP（含全部评论）');
+  button.innerHTML = EXPORT_ALL;
+}
+
+async function exportSavedTopics() {
+  const topics = Object.values(store.bookmarks || {}).filter(topic => !topic._deleted);
+  if (!topics.length) return;
+  const button = $('exportBtn');
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '导出准备中...';
+  try {
+    const packageData = await LinuxDoMarkdown.buildSavedTopicsArchive(
+      store,
+      requestImageAsset,
+      (done, total) => { if (total) button.textContent = `处理图片 ${done}/${total}`; },
+    );
+    const zip = LinuxDoMarkdown.createZip(packageData.files);
+    downloadBlob(zip, `linuxdo-stars-${new Date().toISOString().slice(0, 10)}.zip`);
+    if (packageData.failed) alert(`${packageData.failed} 张图片未能归档，已保留原链接`);
+  } catch (error) {
+    alert(`导出失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
+async function requestImageAsset(url) {
+  const response = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_ASSET', url });
+  return response?.ok ? response.asset : null;
+}
+
+async function fetchTopicPosts(topic) {
+  const baseUrl = String(topic.topicUrl || '').replace(/\/$/, '');
+  if (!baseUrl) throw new Error('帖子链接缺失');
+  const topicId = extractTopicId(baseUrl);
+  if (!topicId) throw new Error('帖子链接中没有 topic ID');
+  const apiBase = `${new URL(baseUrl).origin}/t/${topicId}`;
+  const firstResponse = await fetch(`${apiBase}.json`, { credentials: 'include' });
+  if (!firstResponse.ok) throw new Error(`读取帖子失败 (${firstResponse.status})`);
+  const first = await firstResponse.json();
+  const stream = first.post_stream?.stream || [];
+  const postsById = new Map((first.post_stream?.posts || []).map(post => [String(post.id), post]));
+  const missing = stream.map(String).filter(id => !postsById.has(id));
+
+  for (let i = 0; i < missing.length; i += 20) {
+    const ids = missing.slice(i, i + 20);
+    const query = ids.map(id => `post_ids[]=${encodeURIComponent(id)}`).join('&');
+    const response = await fetch(`${apiBase}/posts.json?${query}`, { credentials: 'include' });
+    if (!response.ok) throw new Error(`读取评论页失败 (${response.status})`);
+    const data = await response.json();
+    for (const post of data.post_stream?.posts || []) postsById.set(String(post.id), post);
+  }
+
+  return (stream.length ? stream.map(String) : [...postsById.keys()])
+    .map(id => postsById.get(id))
+    .filter(Boolean)
+    .sort((a, b) => Number(a.post_number || 0) - Number(b.post_number || 0));
+}
+
+function extractTopicId(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\/t\/(?:[^/]+\/)?(\d+)(?:\/|$)/);
+    return match?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function postToMarkdown(post, baseUrl) {
+  if (!post?.cooked) return '';
+  const container = document.createElement('div');
+  container.innerHTML = post.cooked;
+  return LinuxDoMarkdown.htmlToMarkdown(container, baseUrl);
+}
+
+function downloadBlob(blob, filename) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 function showConfirm(msg, onYes) {
@@ -523,4 +747,6 @@ function h(t) { if (!t) return ''; const d = document.createElement('div'); d.te
 function at(t) { return (t || '').replace(/"/g, '&quot;'); }
 function ft(s) { if (!s) return ''; const d = Date.now() - new Date(s).getTime(); if (d < 6e4) return '刚刚'; if (d < 36e5) return `${~~(d / 6e4)}分钟前`; if (d < 864e5) return `${~~(d / 36e5)}小时前`; if (d < 6048e5) return `${~~(d / 864e5)}天前`; const dt = new Date(s); return `${dt.getMonth() + 1}/${dt.getDate()}`; }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-function dl(c, f) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([c], { type: 'application/json' })); a.download = f; a.click(); URL.revokeObjectURL(a.href); }
+function mdLine(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+function formatDateTime(s) { return s ? new Date(s).toLocaleString('zh-CN') : ''; }
+function safeFilePart(t) { return mdLine(t).replace(/[\\/:*?"<>|]/g, '-').slice(0, 40) || 'bookmarks'; }

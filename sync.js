@@ -141,16 +141,28 @@ const SyncManager = {
     const gist = await this.apiRequest(token, `https://api.github.com/gists/${gistId}`);
     const file = gist.files[GIST_FILENAME];
     if (!file) throw new Error('Gist 中未找到数据文件');
+    let content = file.content;
+    if (file.truncated || typeof content !== 'string') {
+      if (!file.raw_url) throw new Error('Gist 数据文件过大且无法读取');
+      const raw = await fetch(file.raw_url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github.raw',
+        },
+      });
+      if (!raw.ok) throw new Error(`读取 Gist 原始文件失败 (${raw.status})`);
+      content = await raw.text();
+    }
 
     try {
-      const data = JSON.parse(file.content);
+      const data = JSON.parse(content);
       // Ensure structure
       if (!data.collections) data.collections = {};
       if (!data.bookmarks) data.bookmarks = {};
+      if (!data.assets) data.assets = {};
       return data;
     } catch {
-      // Corrupted data, return empty
-      return { collections: {}, bookmarks: {} };
+      throw new Error('Gist 数据格式损坏，已停止同步以避免覆盖远端存档');
     }
   },
 
@@ -228,7 +240,31 @@ const SyncManager = {
    *  - Tombstones older than 7 days are purged after merge
    */
   merge(local, remote) {
-    const result = { collections: {}, bookmarks: {} };
+    const result = { collections: {}, bookmarks: {}, assets: {} };
+
+    // Assets are content-addressed, so the union is naturally deduplicated.
+    const allAssetIds = new Set([
+      ...Object.keys(local.assets || {}),
+      ...Object.keys(remote.assets || {}),
+    ]);
+    for (const id of allAssetIds) {
+      const l = local.assets?.[id];
+      const r = remote.assets?.[id];
+      if (!l) result.assets[id] = r;
+      else if (!r) result.assets[id] = l;
+      else {
+        result.assets[id] = {
+          ...r,
+          ...l,
+          dataUrl: l.dataUrl || r.dataUrl,
+          originalUrl: l.originalUrl || r.originalUrl,
+          originalUrls: [...new Set([
+            ...(l.originalUrls || (l.originalUrl ? [l.originalUrl] : [])),
+            ...(r.originalUrls || (r.originalUrl ? [r.originalUrl] : [])),
+          ])],
+        };
+      }
+    }
 
     // --- Merge collections ---
     const allColIds = new Set([

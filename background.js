@@ -3,7 +3,7 @@
  * Handles badge count + auto-sync scheduling
  */
 
-import { STORAGE_KEY, DEFAULT_COLLECTION, StarStorage } from './storage-esm.js';
+import { StarStorage } from './storage-esm.js';
 import { SyncManager } from './sync-esm.js';
 
 const SYNC_ALARM = 'linuxdo-star-sync';
@@ -27,6 +27,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ==================== Message Handler ====================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'FETCH_IMAGE_ASSET') {
+    fetchImageAsset(message.url)
+      .then(asset => sendResponse({ ok: true, asset }))
+      .catch(error => sendResponse({ ok: false, message: error.message || '图片请求失败' }));
+    return true;
+  }
   if (message.type === 'GET_BADGE_COUNT') {
     updateBadge();
     sendResponse({ ok: true });
@@ -63,6 +69,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+async function fetchImageAsset(url) {
+  const imageUrl = validateImageUrl(url);
+  const response = await fetch(imageUrl, { credentials: 'include' });
+  if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
+
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) return null;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  const mimeType = blob.type || 'image/png';
+
+  return {
+    id: `asset_${hash}`,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${bytesToBase64(bytes)}`,
+    originalUrl: imageUrl,
+    originalUrls: [imageUrl],
+  };
+}
+
+function validateImageUrl(url) {
+  let imageUrl;
+  try {
+    imageUrl = new URL(String(url));
+  } catch {
+    throw new Error('图片地址无效');
+  }
+  if (!['http:', 'https:'].includes(imageUrl.protocol)) {
+    throw new Error('不支持的图片地址');
+  }
+  return imageUrl.href;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
 
 // ==================== Badge ====================
 async function updateBadge() {
