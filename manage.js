@@ -399,7 +399,7 @@ async function exportSavedTopicAll(key, exportButton) {
   topicExportsInProgress.add(key);
   markExportButtonBusy(exportButton, '导出准备中...');
   try {
-    const posts = await loadTopicPostsForExport(topic);
+    const posts = await loadTopicPostsForExport(topic, exportButton);
     const metas = buildSavedTopicExportMetas(topic, posts);
     if (!metas.length) return alert('没有找到帖子正文');
     const imageResult = await archiveTopicImages(metas, exportButton);
@@ -414,11 +414,12 @@ async function exportSavedTopicAll(key, exportButton) {
   }
 }
 
-async function loadTopicPostsForExport(topic) {
+async function loadTopicPostsForExport(topic, exportButton) {
   try {
-    const posts = await fetchTopicPosts(topic);
+    const posts = await fetchTopicPosts(topic, progress => updateTopicFetchProgress(exportButton, progress));
     return posts.length ? posts : buildArchivedTopicPosts(topic);
   } catch (error) {
+    if (error.status === 429) throw error;
     const archivedPosts = buildArchivedTopicPosts(topic);
     if (archivedPosts.length) return archivedPosts;
     throw error;
@@ -527,32 +528,21 @@ async function requestImageAsset(url) {
   return response?.ok ? response.asset : null;
 }
 
-async function fetchTopicPosts(topic) {
+async function fetchTopicPosts(topic, onProgress) {
   const baseUrl = String(topic.topicUrl || '').replace(/\/$/, '');
   if (!baseUrl) throw new Error('帖子链接缺失');
   const topicId = extractTopicId(baseUrl);
   if (!topicId) throw new Error('帖子链接中没有 topic ID');
   const apiBase = `${new URL(baseUrl).origin}/t/${topicId}`;
-  const firstResponse = await fetch(`${apiBase}.json`, { credentials: 'include' });
-  if (!firstResponse.ok) throw new Error(`读取帖子失败 (${firstResponse.status})`);
-  const first = await firstResponse.json();
-  const stream = first.post_stream?.stream || [];
-  const postsById = new Map((first.post_stream?.posts || []).map(post => [String(post.id), post]));
-  const missing = stream.map(String).filter(id => !postsById.has(id));
+  return LinuxDoMarkdown.fetchTopicPostsFromApi(apiBase, onProgress);
+}
 
-  for (let i = 0; i < missing.length; i += 20) {
-    const ids = missing.slice(i, i + 20);
-    const query = ids.map(id => `post_ids[]=${encodeURIComponent(id)}`).join('&');
-    const response = await fetch(`${apiBase}/posts.json?${query}`, { credentials: 'include' });
-    if (!response.ok) throw new Error(`读取评论页失败 (${response.status})`);
-    const data = await response.json();
-    for (const post of data.post_stream?.posts || []) postsById.set(String(post.id), post);
+function updateTopicFetchProgress(exportButton, progress) {
+  if (progress.phase === 'retry') {
+    markExportButtonBusy(exportButton, `接口限频，${Math.ceil(progress.delay / 1000)} 秒后重试...`);
+  } else if (progress.phase === 'posts') {
+    markExportButtonBusy(exportButton, `读取评论 ${progress.completed}/${progress.total}...`);
   }
-
-  return (stream.length ? stream.map(String) : [...postsById.keys()])
-    .map(id => postsById.get(id))
-    .filter(Boolean)
-    .sort((a, b) => Number(a.post_number || 0) - Number(b.post_number || 0));
 }
 
 function extractTopicId(url) {

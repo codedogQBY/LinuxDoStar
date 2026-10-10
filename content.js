@@ -206,26 +206,13 @@
   async function fetchTopicPostsForExport() {
     const topicId = getTopicId();
     const apiBase = `https://linux.do/t/${topicId}`;
-    const firstResponse = await fetch(`${apiBase}.json`, { credentials: 'include' });
-    if (!firstResponse.ok) throw new Error(`读取帖子失败 (${firstResponse.status})`);
-    const first = await firstResponse.json();
-    const stream = first.post_stream?.stream || [];
-    const postsById = new Map((first.post_stream?.posts || []).map(post => [String(post.id), post]));
-    const missing = stream.map(String).filter(id => !postsById.has(id));
-
-    for (let i = 0; i < missing.length; i += 20) {
-      const ids = missing.slice(i, i + 20);
-      const query = ids.map(id => `post_ids[]=${encodeURIComponent(id)}`).join('&');
-      const response = await fetch(`${apiBase}/posts.json?${query}`, { credentials: 'include' });
-      if (!response.ok) throw new Error(`读取评论页失败 (${response.status})`);
-      const data = await response.json();
-      for (const post of data.post_stream?.posts || []) postsById.set(String(post.id), post);
-    }
-
-    return (stream.length ? stream.map(String) : [...postsById.keys()])
-      .map(id => postsById.get(id))
-      .filter(Boolean)
-      .sort((a, b) => Number(a.post_number || 0) - Number(b.post_number || 0));
+    return LinuxDoMarkdown.fetchTopicPostsFromApi(apiBase, progress => {
+      if (progress.phase === 'retry') {
+        showExportProgress(`接口限频，${Math.ceil(progress.delay / 1000)} 秒后重试...`);
+      } else if (progress.phase === 'posts') {
+        showExportProgress(`正在读取评论 ${progress.completed}/${progress.total}...`);
+      }
+    });
   }
 
   function safeFilename(value) {

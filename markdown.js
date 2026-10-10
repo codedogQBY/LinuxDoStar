@@ -5,6 +5,10 @@
 (function (root) {
   'use strict';
 
+  const TOPIC_POST_BATCH_SIZE = 100;
+  const TOPIC_REQUEST_INTERVAL_MS = 500;
+  const TOPIC_REQUEST_MAX_RETRIES = 5;
+
   function htmlToMarkdown(container, baseUrl = '') {
     if (!container) return '';
     return normalizeMarkdown(
@@ -170,6 +174,87 @@
       ...buildMarkdownZip(sections.join('\n\n'), assets, 'linuxdo-stars.md'),
       failed: imageResult.failed,
     };
+  }
+
+  async function fetchTopicPostsFromApi(apiBase, onProgress) {
+    const topicPayload = await fetchTopicJson(`${apiBase}.json`, onProgress);
+    const stream = topicPayload.post_stream?.stream || [];
+    const postsById = new Map((topicPayload.post_stream?.posts || []).map(post => [String(post.id), post]));
+    const missing = stream.map(String).filter(id => !postsById.has(id));
+    await fetchMissingTopicPosts(apiBase, missing, postsById, onProgress);
+    return orderTopicPosts(stream, postsById);
+  }
+
+  async function fetchMissingTopicPosts(apiBase, missing, postsById, onProgress) {
+    for (let start = 0; start < missing.length; start += TOPIC_POST_BATCH_SIZE) {
+      if (start > 0) await waitForTopicRequest(TOPIC_REQUEST_INTERVAL_MS);
+      const ids = missing.slice(start, start + TOPIC_POST_BATCH_SIZE);
+      const query = ids.map(id => `post_ids[]=${encodeURIComponent(id)}`).join('&');
+      const postsPayload = await fetchTopicJson(`${apiBase}/posts.json?${query}`, onProgress);
+      for (const post of postsPayload.post_stream?.posts || []) postsById.set(String(post.id), post);
+      onProgress?.({
+        phase: 'posts',
+        completed: Math.min(start + ids.length, missing.length),
+        total: missing.length,
+      });
+    }
+  }
+
+  function orderTopicPosts(stream, postsById) {
+    return (stream.length ? stream.map(String) : [...postsById.keys()])
+      .map(id => postsById.get(id))
+      .filter(Boolean)
+      .sort((firstPost, secondPost) => Number(firstPost.post_number || 0) - Number(secondPost.post_number || 0));
+  }
+
+  async function fetchTopicJson(url, onProgress) {
+    for (let attempt = 0; attempt <= TOPIC_REQUEST_MAX_RETRIES; attempt += 1) {
+      let response;
+      try {
+        response = await fetch(url, { credentials: 'include' });
+      } catch (error) {
+        if (!(error instanceof TypeError) || attempt === TOPIC_REQUEST_MAX_RETRIES) throw error;
+        await notifyAndWait(onProgress, attempt, null);
+        continue;
+      }
+      if (response.ok) return response.json();
+      if (!isRetryableTopicStatus(response.status) || attempt === TOPIC_REQUEST_MAX_RETRIES) {
+        throw topicRequestError(response.status);
+      }
+      const delay = retryDelay(response, attempt);
+      onProgress?.({ phase: 'retry', attempt: attempt + 1, delay, status: response.status });
+      await waitForTopicRequest(delay);
+    }
+    throw new Error('读取帖子失败');
+  }
+
+  function isRetryableTopicStatus(status) {
+    return status === 408 || status === 429 || status >= 500;
+  }
+
+  function retryDelay(response, attempt) {
+    const retryAfter = response.headers.get('Retry-After');
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 120000);
+    const retryDate = Date.parse(retryAfter || '');
+    if (Number.isFinite(retryDate)) return Math.min(Math.max(retryDate - Date.now(), 1000), 120000);
+    return Math.min(1000 * (2 ** attempt), 120000);
+  }
+
+  async function notifyAndWait(onProgress, attempt, status) {
+    const delay = Math.min(1000 * (2 ** attempt), 120000);
+    onProgress?.({ phase: 'retry', attempt: attempt + 1, delay, status });
+    await waitForTopicRequest(delay);
+  }
+
+  function topicRequestError(status) {
+    const error = new Error(status === 429 ? '站点暂时限频，请稍后再导出' : `读取评论失败 (${status})`);
+    error.status = status;
+    return error;
+  }
+
+  function waitForTopicRequest(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
   }
 
   function buildSavedTopicMetas(store) {
@@ -446,6 +531,7 @@
     extensionForMime,
     buildMarkdownZip,
     buildSavedTopicsArchive,
+    fetchTopicPostsFromApi,
     archiveMarkdownImagesQueued,
     mergeAssetMaps,
     createZip,
