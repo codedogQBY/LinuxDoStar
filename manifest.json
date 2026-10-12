@@ -1,14 +1,22 @@
 {
   "manifest_version": 3,
   "name": "LinuxDo Star - 收藏助手",
-  "version": "1.2.0",
-  "description": "为 linux.do 论坛添加帖子和评论收藏功能，支持 GitHub Gist 同步",
+  "version": "1.3.0",
+  "description": "为 linux.do 论坛添加帖子和评论收藏功能，支持 ZIP、Obsidian、Notion 和飞书保存",
   "permissions": ["storage", "unlimitedStorage", "activeTab", "alarms"],
-  "host_permissions": ["https://linux.do/*", "https://api.github.com/*", "https://*/*", "http://*/*"],
+  "host_permissions": [
+    "https://linux.do/*",
+    "https://api.github.com/*",
+    "https://api.notion.com/*",
+    "https://open.feishu.cn/*",
+    "https://open.larksuite.com/*",
+    "https://*/*",
+    "http://*/*"
+  ],
   "content_scripts": [
     {
       "matches": ["https://linux.do/*"],
-      "js": ["markdown.js", "storage.js", "content.js"],
+      "js": ["markdown.js", "storage.js", "integrations.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

@@ -7,6 +7,7 @@ let store = { collections: {}, bookmarks: {} };
 const openCols = new Set();   // open collection ids
 const openTopics = new Set(); // open topic keys (showing posts)
 let exportInProgress = false;
+const externalSavesInProgress = new Set();
 
 document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
@@ -82,6 +83,13 @@ function downloadBlob(blob, filename) {
 async function handleClick(e) {
   const t = e.target;
 
+  const externalBtn = t.closest('[data-act="save-external"]');
+  if (externalBtn) {
+    e.stopPropagation();
+    await saveTopicExternal(externalBtn.dataset.key, externalBtn);
+    return;
+  }
+
   // Toggle collection
   const colH = t.closest('.col-header');
   if (colH) {
@@ -138,6 +146,7 @@ async function handleClick(e) {
 // ==================== Render ====================
 const CHEVRON = `<svg class="col-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 const X_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+const SAVE_EXTERNAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M19 3h2v2"/></svg>`;
 
 function render() {
   const q = $('search').value.toLowerCase().trim();
@@ -222,6 +231,7 @@ function renderTopic(t, q) {
         </div>
       </div>
       <div class="topic-actions">
+        <button class="btn-tiny" data-act="save-external" data-key="${t.key}" title="保存到外部">${SAVE_EXTERNAL}</button>
         <button class="btn-tiny del" data-act="del-t" data-key="${t.key}" title="删除">${X_SVG}</button>
       </div>
     </div>
@@ -247,9 +257,60 @@ function renderTopic(t, q) {
   </div>`;
 }
 
+async function saveTopicExternal(key, button) {
+  const topic = store.bookmarks[key];
+  if (!topic || topic._deleted || externalSavesInProgress.has(key)) return;
+  const targets = await LinuxDoIntegrations.showTargetMenu(button);
+  if (!targets.length) return;
+  externalSavesInProgress.add(key);
+  button.disabled = true;
+  try {
+    const sections = buildPopupTopicSections(topic);
+    if (!sections.length) throw new Error('收藏中没有可保存的正文');
+    const result = await LinuxDoIntegrations.save({
+      title: topic.topicTitle || 'LinuxDo 帖子',
+      url: topic.topicUrl || '',
+      author: firstTopicAuthor(topic),
+      category: topic.category || '',
+      tags: topic.tags || [],
+      savedAt: new Date().toISOString(),
+      commentCount: Object.values(topic.posts || {}).filter(post => !post._deleted && post.contentMarkdown).length,
+      markdown: sections.join('\n\n'),
+      assets: store.assets || {},
+    }, targets);
+    const labels = LinuxDoIntegrations.labels();
+    const succeeded = (result.results || []).filter(item => item.ok).map(item => labels[item.target]);
+    const failed = (result.results || []).filter(item => !item.ok);
+    if (!succeeded.length) throw new Error(failed.map(item => `${labels[item.target]}：${item.error}`).join('；') || '保存失败');
+    alert(`已保存到 ${succeeded.join('、')}${failed.length ? '；部分目标失败' : ''}`);
+  } catch (error) {
+    alert(`外部保存失败：${error.message}`);
+  } finally {
+    externalSavesInProgress.delete(key);
+    button.disabled = false;
+  }
+}
+
+function buildPopupTopicSections(topic) {
+  const sections = [];
+  if (topic.contentMarkdown) sections.push(`# ${mdLine(topic.topicTitle || '未知标题')}\n\n${topic.contentMarkdown}`);
+  const posts = Object.values(topic.posts || {})
+    .filter(post => !post._deleted && post.contentMarkdown)
+    .sort((a, b) => Number(a.postNumber || 0) - Number(b.postNumber || 0));
+  for (const post of posts) {
+    sections.push(`## #${post.postNumber || '?'}${post.author ? ` @${mdLine(post.author)}` : ''}\n\n${post.contentMarkdown}`);
+  }
+  return sections;
+}
+
+function firstTopicAuthor(topic) {
+  return Object.values(topic.posts || {}).find(post => !post._deleted && post.author)?.author || '';
+}
+
 // Utils
 function $(id) { return document.getElementById(id); }
 function h(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 function a(t) { return (t || '').replace(/"/g, '&quot;'); }
 function ft(s) { if (!s) return ''; const d = Date.now() - new Date(s).getTime(); if (d < 6e4) return '刚刚'; if (d < 36e5) return `${~~(d / 6e4)}分钟前`; if (d < 864e5) return `${~~(d / 36e5)}小时前`; if (d < 6048e5) return `${~~(d / 864e5)}天前`; const dt = new Date(s); return `${dt.getMonth() + 1}/${dt.getDate()}`; }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+function mdLine(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }

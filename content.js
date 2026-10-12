@@ -9,12 +9,14 @@
   const STAR_CLASS = 'ld-star-btn';
   const STAR_ACTIVE_CLASS = 'ld-star-active';
   const TOPIC_EXPORT_CLASS = 'ld-md-topic-export-btn';
+  const TOPIC_EXTERNAL_CLASS = 'ld-external-topic-save-btn';
 
   // Star SVG matching Discourse's icon structure
   const STAR_SVG = `<svg class="ld-star-icon fa d-icon svg-icon svg-string" width="1em" height="1em" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
   </svg><span aria-hidden="true">\u200B</span>`;
   const EXPORT_SVG = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span aria-hidden="true">\u200B</span>`;
+  const EXTERNAL_SVG = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M19 3h2v2"/></svg><span aria-hidden="true">\u200B</span>`;
 
   // ===================== DOM Utilities =====================
   function getTopicId() {
@@ -138,6 +140,7 @@
   }
 
   let topicExportInProgress = false;
+  let topicExternalInProgress = false;
 
   function buildTopicExportMetas(posts) {
     return posts.map(post => {
@@ -184,6 +187,48 @@
     } finally {
       topicExportInProgress = false;
       setTopicExportBusy(false);
+    }
+  }
+
+  async function saveAllTopicExternal() {
+    if (topicExternalInProgress) return;
+    const anchor = document.querySelector('.' + TOPIC_EXTERNAL_CLASS);
+    const targets = await LinuxDoIntegrations.showTargetMenu(anchor || document.body);
+    if (!targets.length) return;
+    topicExternalInProgress = true;
+    setTopicExternalBusy(true, '准备保存到外部...');
+    try {
+      showExportProgress('正在读取主贴和评论...');
+      const posts = await fetchTopicPostsForExport();
+      const metas = buildTopicExportMetas(posts);
+      if (!metas.length) throw new Error('没有找到帖子正文');
+      setTopicExternalBusy(true, '处理图片中...');
+      const imageResult = await archiveMarkdownImagesQueued(metas, (done, total) => {
+        if (total) setTopicExternalBusy(true, `处理图片 ${done}/${total}...`);
+      });
+      const sections = buildTopicExportSections(metas);
+      const data = {
+        title: getTopicTitle(),
+        url: `https://linux.do/t/${getTopicSlug()}/${getTopicId()}`,
+        author: posts[0]?.username || posts[0]?.name || '',
+        category: getTopicCategory(),
+        tags: getTopicTags(),
+        savedAt: new Date().toISOString(),
+        commentCount: metas.filter(({ post }) => Number(post.post_number) > 1).length,
+        markdown: sections.join('\n\n'),
+        assets: imageResult.assets,
+      };
+      const result = await LinuxDoIntegrations.save(data, targets);
+      const failed = (result.results || []).filter(item => !item.ok);
+      const succeeded = (result.results || []).filter(item => item.ok).map(item => LinuxDoIntegrations.labels()[item.target]);
+      if (!succeeded.length) throw new Error(failed.map(item => `${LinuxDoIntegrations.labels()[item.target]}：${item.error}`).join('；') || '保存失败');
+      const warning = imageResult.failed ? `，${imageResult.failed} 张图片使用原链接` : '';
+      showToast(`已保存到 ${succeeded.join('、')}${warning}`, failed.length ? '⚠️' : '✓');
+    } catch (err) {
+      showToast(err.message || '外部保存失败', '⚠️');
+    } finally {
+      topicExternalInProgress = false;
+      setTopicExternalBusy(false);
     }
   }
 
@@ -517,6 +562,17 @@
     });
   }
 
+  function setTopicExternalBusy(busy, label = '保存到外部') {
+    document.querySelectorAll('.' + TOPIC_EXTERNAL_CLASS).forEach(btn => {
+      btn.disabled = busy;
+      btn.classList.toggle('ld-md-export-loading', busy);
+      btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+      btn.setAttribute('title', busy ? label : '保存到外部');
+      btn.setAttribute('aria-label', busy ? label : '保存到外部');
+      btn.innerHTML = busy ? '<span class="ld-md-export-spinner" aria-hidden="true"></span>' : EXTERNAL_SVG;
+    });
+  }
+
   function showExportProgress(message) {
     showToast(message, '⏳');
   }
@@ -662,6 +718,11 @@
     const exportBtn = createMarkdownExportButton('导出帖子 ZIP（含全部评论）', exportAllTopicPosts, TOPIC_EXPORT_CLASS);
     exportBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
     titleEl.appendChild(exportBtn);
+    if (!titleEl.querySelector(`.${TOPIC_EXTERNAL_CLASS}`)) {
+      const externalBtn = createMarkdownExportButton('保存到外部', saveAllTopicExternal, TOPIC_EXTERNAL_CLASS);
+      externalBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+      titleEl.appendChild(externalBtn);
+    }
   }
 
   async function updateTopicStarState(topicId) {

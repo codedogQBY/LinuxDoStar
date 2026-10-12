@@ -10,6 +10,7 @@ const expanded = new Set();
 let batchMode = false;
 const selected = new Set(); // selected bookmark keys for batch delete
 const topicExportsInProgress = new Set();
+const topicExternalSavesInProgress = new Set();
 
 document.addEventListener('DOMContentLoaded', async () => {
   store = await StarStorage.getAll();
@@ -122,13 +123,77 @@ async function openSettingsPanel() {
     </label>
     <div class="sync-info" style="margin-top:12px;">
       开启后，收藏主贴或评论时会把正文存入收藏数据；图片会按内容去重保存。<br>
-      关闭后仍可在帖子页手动导出 ZIP。
+      关闭后仍可在帖子页手动导出 ZIP。外部保存入口会出现在帖子页和每个收藏帖旁边。
     </div>
+    <div class="settings-section-title">Obsidian</div>
+    <div class="sync-info">使用 Advanced URI 插件写入 Markdown；填写 Local REST API 后可把已归档图片写入 Vault。</div>
+    <div class="sync-field"><div class="sync-label">Vault 名称（可选）</div><input class="sync-input" id="obsidianVault" value="${h(settings.obsidianVault)}" placeholder="我的 Vault"></div>
+    <div class="sync-field"><div class="sync-label">保存文件夹</div><input class="sync-input" id="obsidianFolder" value="${h(settings.obsidianFolder)}" placeholder="LinuxDo"></div>
+    <label class="sync-toggle"><input type="checkbox" id="obsidianDownloadImages" ${settings.obsidianDownloadImages ? 'checked' : ''}>通过 Local REST API 保存图片</label>
+    <div class="sync-field"><div class="sync-label">Local REST API Key</div><input class="sync-input" id="obsidianRestApiKey" type="password" value="${h(settings.obsidianRestApiKey)}" placeholder="可选"></div>
+    <div class="sync-field"><div class="sync-label">Local REST API 端口</div><input class="sync-input" id="obsidianRestApiPort" type="number" value="${Number(settings.obsidianRestApiPort) || 27123}" min="1" max="65535"></div>
+    <button class="btn-outline btn-sm" id="testObsidian">测试 Obsidian 连接</button><span class="settings-status" id="obsidianStatus"></span>
+
+    <div class="settings-section-title">Notion</div>
+    <div class="sync-info">需要把 Integration 连接到目标 Database。标题、链接等属性按名称自动匹配。</div>
+    <div class="sync-field"><div class="sync-label">Integration Token</div><input class="sync-input" id="notionToken" type="password" value="${h(settings.notionToken)}" placeholder="ntn_ 或 secret_"></div>
+    <div class="sync-field"><div class="sync-label">Database ID</div><input class="sync-input" id="notionDatabaseId" value="${h(settings.notionDatabaseId)}" placeholder="32 位 ID"></div>
+    <button class="btn-outline btn-sm" id="testNotion">测试 Notion 连接</button><span class="settings-status" id="notionStatus"></span>
+
+    <div class="settings-section-title">飞书多维表格</div>
+    <div class="sync-info">默认字段：标题、链接、作者、保存时间、评论数、正文。上传 Markdown 附件需要额外开通上传文件权限。</div>
+    <div class="sync-field"><div class="sync-label">版本</div><select class="sync-input" id="feishuApiDomain"><option value="feishu" ${settings.feishuApiDomain !== 'lark' ? 'selected' : ''}>飞书国内版</option><option value="lark" ${settings.feishuApiDomain === 'lark' ? 'selected' : ''}>Lark 国际版</option></select></div>
+    <div class="sync-field"><div class="sync-label">App ID</div><input class="sync-input" id="feishuAppId" value="${h(settings.feishuAppId)}" placeholder="cli_..."></div>
+    <div class="sync-field"><div class="sync-label">App Secret</div><input class="sync-input" id="feishuAppSecret" type="password" value="${h(settings.feishuAppSecret)}"></div>
+    <div class="sync-field"><div class="sync-label">多维表格 app_token</div><input class="sync-input" id="feishuAppToken" value="${h(settings.feishuAppToken)}" placeholder="base..."></div>
+    <div class="sync-field"><div class="sync-label">数据表 table_id</div><input class="sync-input" id="feishuTableId" value="${h(settings.feishuTableId)}" placeholder="tbl..."></div>
+    <label class="sync-toggle"><input type="checkbox" id="feishuUploadContent" ${settings.feishuUploadContent !== false ? 'checked' : ''}>保存正文到「正文」字段</label>
+    <label class="sync-toggle"><input type="checkbox" id="feishuUploadMarkdown" ${settings.feishuUploadMarkdown ? 'checked' : ''}>同时上传 Markdown 附件</label>
+    <button class="btn-outline btn-sm" id="testFeishu">测试飞书凭证</button><span class="settings-status" id="feishuStatus"></span>
+    <div class="settings-actions"><button class="btn-outline btn-sm" id="settingsCancel">取消</button><button class="btn-primary" id="settingsSave">保存设置</button></div>
   `;
-  $('autoArchiveMarkdown').onchange = async e => {
-    await StarStorage.saveSettings({ autoArchiveMarkdown: e.target.checked });
+  $('settingsCancel').onclick = closePanel;
+  $('settingsSave').onclick = async () => {
+    await StarStorage.saveSettings(readExternalSettings());
+    closePanel();
   };
+  $('testObsidian').onclick = () => testExternalSetting('obsidian', $('obsidianStatus'));
+  $('testNotion').onclick = () => testExternalSetting('notion', $('notionStatus'));
+  $('testFeishu').onclick = () => testExternalSetting('feishu', $('feishuStatus'));
   showPanel();
+}
+
+function readExternalSettings() {
+  return {
+    autoArchiveMarkdown: $('autoArchiveMarkdown').checked,
+    obsidianVault: $('obsidianVault').value.trim(),
+    obsidianFolder: $('obsidianFolder').value.trim(),
+    obsidianDownloadImages: $('obsidianDownloadImages').checked,
+    obsidianRestApiKey: $('obsidianRestApiKey').value.trim(),
+    obsidianRestApiPort: Number($('obsidianRestApiPort').value) || 27123,
+    notionToken: $('notionToken').value.trim(),
+    notionDatabaseId: $('notionDatabaseId').value.trim(),
+    feishuApiDomain: $('feishuApiDomain').value,
+    feishuAppId: $('feishuAppId').value.trim(),
+    feishuAppSecret: $('feishuAppSecret').value.trim(),
+    feishuAppToken: $('feishuAppToken').value.trim(),
+    feishuTableId: $('feishuTableId').value.trim(),
+    feishuUploadContent: $('feishuUploadContent').checked,
+    feishuUploadMarkdown: $('feishuUploadMarkdown').checked,
+  };
+}
+
+async function testExternalSetting(target, statusEl) {
+  statusEl.textContent = '测试中...';
+  statusEl.style.color = '#71717a';
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'TEST_EXTERNAL', target, settings: readExternalSettings() });
+    statusEl.textContent = result.ok ? '连接成功' : `失败：${result.error || '未知错误'}`;
+    statusEl.style.color = result.ok ? '#16a34a' : '#dc2626';
+  } catch (error) {
+    statusEl.textContent = `失败：${error.message}`;
+    statusEl.style.color = '#dc2626';
+  }
 }
 
 // ==================== Content ====================
@@ -190,6 +255,8 @@ async function handleContent(e) {
     openPostDetail(act.dataset.tkey, act.dataset.pkey);
   } else if (a === 'export-all') {
     await exportSavedTopicAll(act.dataset.key, act);
+  } else if (a === 'save-external') {
+    await saveSavedTopicExternal(act.dataset.key, act);
   } else if (a === 'move') {
     openMove(act.dataset.tkey, act.dataset.pkey);
   }
@@ -200,6 +267,7 @@ const CHEVRON = `<svg class="card-chevron" viewBox="0 0 24 24" fill="none" strok
 const X = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 const FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
 const EXPORT_ALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>`;
+const SAVE_EXTERNAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M19 3h2v2"/></svg>`;
 
 function render() {
   const q = $('searchInput').value.toLowerCase().trim();
@@ -233,6 +301,7 @@ function render() {
         </div>
         <div class="card-actions">
           <button class="card-btn" data-act="export-all" data-key="${t.key}" title="导出帖子 ZIP（含全部评论）">${EXPORT_ALL}</button>
+          <button class="card-btn" data-act="save-external" data-key="${t.key}" title="保存到外部">${SAVE_EXTERNAL}</button>
           <button class="card-btn" data-act="move" data-tkey="${t.key}" title="移动">${FOLDER}</button>
           <button class="card-btn del" data-act="del-t" data-key="${t.key}" title="删除">${X}</button>
         </div>
@@ -414,6 +483,44 @@ async function exportSavedTopicAll(key, exportButton) {
   }
 }
 
+async function saveSavedTopicExternal(key, saveButton) {
+  const topic = store.bookmarks[key];
+  if (!topic || topic._deleted || topicExternalSavesInProgress.has(key)) return;
+  const targets = await LinuxDoIntegrations.showTargetMenu(saveButton);
+  if (!targets.length) return;
+  topicExternalSavesInProgress.add(key);
+  markExternalButtonBusy(saveButton, '准备保存到外部...');
+  try {
+    const posts = await loadTopicPostsForExport(topic, saveButton);
+    const metas = buildSavedTopicExportMetas(topic, posts);
+    if (!metas.length) throw new Error('没有找到帖子正文');
+    const imageResult = await archiveTopicImages(metas, saveButton);
+    const sections = buildSavedTopicSections(topic, metas);
+    const data = {
+      title: topic.topicTitle || 'LinuxDo 帖子',
+      url: topic.topicUrl || '',
+      author: posts[0]?.username || posts[0]?.name || '',
+      category: topic.category || '',
+      tags: topic.tags || [],
+      savedAt: new Date().toISOString(),
+      commentCount: metas.filter(({ post }) => Number(post.post_number) > 1).length,
+      markdown: sections.join('\n\n'),
+      assets: LinuxDoMarkdown.mergeAssetMaps(store.assets || {}, imageResult.assets),
+    };
+    const result = await LinuxDoIntegrations.save(data, targets);
+    const failed = (result.results || []).filter(item => !item.ok);
+    const succeeded = (result.results || []).filter(item => item.ok).map(item => LinuxDoIntegrations.labels()[item.target]);
+    if (!succeeded.length) throw new Error(failed.map(item => `${LinuxDoIntegrations.labels()[item.target]}：${item.error}`).join('；') || '保存失败');
+    const warning = imageResult.failed ? `，${imageResult.failed} 张图片使用原链接` : '';
+    alert(`已保存到 ${succeeded.join('、')}${warning}${failed.length ? '；部分目标失败' : ''}`);
+  } catch (error) {
+    alert(`外部保存失败：${error.message}`);
+  } finally {
+    topicExternalSavesInProgress.delete(key);
+    restoreExternalButton(saveButton);
+  }
+}
+
 async function loadTopicPostsForExport(topic, exportButton) {
   try {
     const posts = await fetchTopicPosts(topic, progress => updateTopicFetchProgress(exportButton, progress));
@@ -463,12 +570,7 @@ function archiveTopicImages(metas, exportButton) {
 
 function buildSavedTopicPackage(topic, metas, assets) {
   const title = safeFilePart(topic.topicTitle || 'topic');
-  const sections = metas.map(({ post, contentMarkdown, username }) => {
-    const heading = Number(post.post_number) === 1
-      ? `# ${mdLine(topic.topicTitle || '未知标题')}`
-      : `## #${post.post_number}${username ? ` @${mdLine(username)}` : ''}`;
-    return `${heading}\n\n${contentMarkdown}`;
-  });
+  const sections = buildSavedTopicSections(topic, metas);
   return {
     title,
     packageData: LinuxDoMarkdown.buildMarkdownZip(
@@ -477,6 +579,15 @@ function buildSavedTopicPackage(topic, metas, assets) {
       `${title}.md`,
     ),
   };
+}
+
+function buildSavedTopicSections(topic, metas) {
+  return metas.map(({ post, contentMarkdown, username }) => {
+    const heading = Number(post.post_number) === 1
+      ? `# ${mdLine(topic.topicTitle || '未知标题')}`
+      : `## #${post.post_number}${username ? ` @${mdLine(username)}` : ''}`;
+    return `${heading}\n\n${contentMarkdown}`;
+  });
 }
 
 function markExportButtonBusy(button, label) {
@@ -497,6 +608,26 @@ function restoreExportButton(button) {
   button.setAttribute('aria-label', '导出帖子 ZIP（含全部评论）');
   button.setAttribute('title', '导出帖子 ZIP（含全部评论）');
   button.innerHTML = EXPORT_ALL;
+}
+
+function markExternalButtonBusy(button, label) {
+  if (!button) return;
+  button.disabled = true;
+  button.classList.add('export-loading');
+  button.setAttribute('aria-busy', 'true');
+  button.setAttribute('aria-label', label);
+  button.setAttribute('title', label);
+  button.innerHTML = '<span class="export-spinner" aria-hidden="true"></span>';
+}
+
+function restoreExternalButton(button) {
+  if (!button) return;
+  button.disabled = false;
+  button.classList.remove('export-loading');
+  button.setAttribute('aria-busy', 'false');
+  button.setAttribute('aria-label', '保存到外部');
+  button.setAttribute('title', '保存到外部');
+  button.innerHTML = SAVE_EXTERNAL;
 }
 
 async function exportSavedTopics() {

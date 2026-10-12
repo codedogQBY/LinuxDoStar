@@ -404,6 +404,14 @@
     return { body, used };
   }
 
+  function restoreAssetReferences(markdown, assets = {}) {
+    return (markdown || '').replace(/!\[([^\]]*)\]\(asset:\/\/([A-Za-z0-9_-]+)\)/g, (full, alt, id) => {
+      const asset = assets[id];
+      const source = asset?.originalUrl || asset?.originalUrls?.[0];
+      return source ? '![' + alt + '](<' + source + '>)' : full;
+    });
+  }
+
   function appendAssetFiles(files, usedAssets) {
     if (!usedAssets.size) return;
     const manifest = {};
@@ -534,6 +542,7 @@
     fetchTopicPostsFromApi,
     archiveMarkdownImagesQueued,
     mergeAssetMaps,
+    restoreAssetReferences,
     createZip,
   };
 })(globalThis);

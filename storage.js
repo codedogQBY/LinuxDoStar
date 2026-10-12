@@ -30,6 +30,27 @@ const STORAGE_KEY = 'linuxdo_stars';
 const SETTINGS_KEY = 'linuxdo_settings';
 const DEFAULT_SETTINGS = {
   autoArchiveMarkdown: true,
+  obsidianVault: '',
+  obsidianFolder: '',
+  obsidianDownloadImages: false,
+  obsidianRestApiKey: '',
+  obsidianRestApiPort: 27123,
+  notionToken: '',
+  notionDatabaseId: '',
+  notionTitleProperty: '标题',
+  notionUrlProperty: '链接',
+  notionAuthorProperty: '作者',
+  notionCategoryProperty: '分类',
+  notionTagsProperty: '标签',
+  notionDateProperty: '保存日期',
+  notionCommentCountProperty: '评论数',
+  feishuApiDomain: 'feishu',
+  feishuAppId: '',
+  feishuAppSecret: '',
+  feishuAppToken: '',
+  feishuTableId: '',
+  feishuUploadContent: true,
+  feishuUploadMarkdown: false,
 };
 
 const DEFAULT_COLLECTION = {
@@ -96,7 +117,11 @@ const StarStorage = {
   async getSettings() {
     return new Promise(resolve => {
       chrome.storage.local.get([SETTINGS_KEY], result => {
-        resolve({ ...DEFAULT_SETTINGS, ...(result[SETTINGS_KEY] || {}) });
+        const saved = result[SETTINGS_KEY] || {};
+        resolve({
+          ...DEFAULT_SETTINGS,
+          ...saved,
+        });
       });
     });
   },

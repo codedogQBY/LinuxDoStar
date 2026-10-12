@@ -12,6 +12,9 @@
 - **自动 Markdown 归档** — 点击收藏时抓取当前帖子/评论正文并转成 Markdown
 - **图片存档** — 收藏时普通图片按内容哈希转成 Base64 资源并去重，表情图片跳过归档并保留原始链接
 - **Markdown 导出** — 页面只提供一个帖子导出按钮，生成包含主贴和全部评论的 ZIP；Markdown 与图片分开存放，图片按队列处理并显示进度
+- **外部保存** — 帖子页、管理页和 Popup 的帖子旁都可将主贴与全部评论保存到 Obsidian、Notion 或飞书；外部保存与 ZIP 共用同一份内容构建逻辑
+- **Obsidian 图片** — 可选通过 Local REST API 将归档图片写入 Vault 的 `media` 目录；未配置时保留图片原链接
+- **Notion / 飞书去重** — Notion 按 URL 查询已有页面，飞书按帖子链接匹配已有记录后更新，避免重复保存
 - **大帖读取** — 评论按每批 100 条读取，批次间隔请求；遇到 429 或服务端错误会按 `Retry-After` 和指数退避重试
 - **归档设置** — 管理页「收藏设置」可开关收藏时的正文存档，默认开启；存档只写入收藏数据，不会自动下载文件
 - **收藏夹分类** — 创建多个收藏夹（技术、职场、生活…），归类管理
@@ -54,12 +57,24 @@
 
 > Token 创建：[GitHub Settings → Tokens → New](https://github.com/settings/tokens/new?scopes=gist&description=LinuxDo+Star+Sync)，勾选 `gist` 权限即可
 
+### 保存到外部服务
+1. 打开管理页，进入「收藏设置」
+2. 配置需要使用的目标：
+   - **Obsidian**：填写 Vault 名称和文件夹；需要本地保存图片时，再填写 Local REST API 插件的 API Key 和端口
+   - **Notion**：填写 Internal Integration Token 和 Database ID，并将 Integration 连接到 Database
+   - **飞书**：填写自建应用的 App ID / Secret、多维表格 `app_token` 和 `table_id`
+3. 在帖子标题旁、管理页帖子卡片或 Popup 帖子旁点击「保存到外部」，选择一个或全部已配置目标
+
+Notion Database 推荐准备 `标题`（Title）、`链接`（URL）、`作者`、`分类`、`标签`、`保存日期` 和 `评论数` 属性。飞书多维表格默认使用 `标题`、`链接`、`作者`、`保存时间`、`评论数` 和 `正文` 字段；Markdown 附件为可选项。
+
 ## 项目结构
 
 ```
 LinuxDoStar/
 ├── manifest.json       # Chrome MV3 扩展配置
 ├── markdown.js         # HTML → Markdown 转换与链接处理
+├── integrations.js     # 页面侧外部保存与 Obsidian URI
+├── integrations-esm.js # 后台 Notion / 飞书 API 与 Obsidian REST API
 ├── storage.js          # 数据结构 & 持久化
 ├── sync.js             # GitHub Gist 同步模块
 ├── background.js       # Service Worker (badge + 同步调度)
@@ -137,6 +152,8 @@ Discourse 使用虚拟滚动回收 DOM 节点，传统 MutationObserver 不够�
 | `linux.do` | 注入收藏按钮、读取帖子与图片 |
 | `http://*/*` / `https://*/*` | 通过后台请求跨域图片并归档 |
 | `api.github.com` | Gist 同步 API |
+| `api.notion.com` | Notion Database / Page API |
+| `open.feishu.cn` / `open.larksuite.com` | 飞书 / Lark 多维表格 API |
 
 ## License
 
