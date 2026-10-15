@@ -49,10 +49,12 @@ async function exportSavedTopics() {
   button.disabled = true;
   button.textContent = '导出准备中...';
   try {
+    const settings = await StarStorage.getSettings();
     const packageData = await LinuxDoMarkdown.buildSavedTopicsArchive(
       store,
       requestImageAsset,
       (done, total) => { if (total) button.textContent = `处理图片 ${done}/${total}`; },
+      { includeComments: settings.includeCommentsInDownloads === true },
     );
     const zip = LinuxDoMarkdown.createZip(packageData.files);
     const date = new Date().toISOString().slice(0, 10);
@@ -265,7 +267,8 @@ async function saveTopicExternal(key, button) {
   externalSavesInProgress.add(key);
   button.disabled = true;
   try {
-    const sections = buildPopupTopicSections(topic);
+    const settings = await StarStorage.getSettings();
+    const sections = buildPopupTopicSections(topic, settings);
     if (!sections.length) throw new Error('收藏中没有可保存的正文');
     const result = await LinuxDoIntegrations.save({
       title: topic.topicTitle || 'LinuxDo 帖子',
@@ -274,7 +277,9 @@ async function saveTopicExternal(key, button) {
       category: topic.category || '',
       tags: topic.tags || [],
       savedAt: new Date().toISOString(),
-      commentCount: Object.values(topic.posts || {}).filter(post => !post._deleted && post.contentMarkdown).length,
+      commentCount: settings.includeCommentsInDownloads === true
+        ? Object.values(topic.posts || {}).filter(post => !post._deleted && post.contentMarkdown).length
+        : 0,
       markdown: sections.join('\n\n'),
       assets: store.assets || {},
     }, targets);
@@ -291,12 +296,18 @@ async function saveTopicExternal(key, button) {
   }
 }
 
-function buildPopupTopicSections(topic) {
+function buildPopupTopicSections(topic, settings) {
   const sections = [];
-  if (topic.contentMarkdown) sections.push(`# ${mdLine(topic.topicTitle || '未知标题')}\n\n${topic.contentMarkdown}`);
-  const posts = Object.values(topic.posts || {})
-    .filter(post => !post._deleted && post.contentMarkdown)
-    .sort((a, b) => Number(a.postNumber || 0) - Number(b.postNumber || 0));
+  if (topic.contentMarkdown) {
+    const title = mdLine(topic.topicTitle || '未知标题');
+    const content = LinuxDoMarkdown.removeDuplicateLeadingTitle(topic.contentMarkdown, title);
+    sections.push(`# ${title}\n\n${content}`);
+  }
+  const posts = settings.includeCommentsInDownloads === true
+    ? Object.values(topic.posts || {})
+      .filter(post => !post._deleted && post.contentMarkdown)
+      .sort((a, b) => Number(a.postNumber || 0) - Number(b.postNumber || 0))
+    : [];
   for (const post of posts) {
     sections.push(`## #${post.postNumber || '?'}${post.author ? ` @${mdLine(post.author)}` : ''}\n\n${post.contentMarkdown}`);
   }

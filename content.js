@@ -9,14 +9,13 @@
   const STAR_CLASS = 'ld-star-btn';
   const STAR_ACTIVE_CLASS = 'ld-star-active';
   const TOPIC_EXPORT_CLASS = 'ld-md-topic-export-btn';
-  const TOPIC_EXTERNAL_CLASS = 'ld-external-topic-save-btn';
+  const LEGACY_TOPIC_EXTERNAL_CLASS = 'ld-external-topic-save-btn';
 
   // Star SVG matching Discourse's icon structure
   const STAR_SVG = `<svg class="ld-star-icon fa d-icon svg-icon svg-string" width="1em" height="1em" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
   </svg><span aria-hidden="true">\u200B</span>`;
   const EXPORT_SVG = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span aria-hidden="true">\u200B</span>`;
-  const EXTERNAL_SVG = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M19 3h2v2"/></svg><span aria-hidden="true">\u200B</span>`;
 
   // ===================== DOM Utilities =====================
   function getTopicId() {
@@ -141,19 +140,24 @@
 
   let topicExportInProgress = false;
   let topicExternalInProgress = false;
+  let topicSaveMenuInProgress = false;
 
   function buildTopicExportMetas(posts) {
     return posts.map(post => {
       const container = document.createElement('div');
       container.innerHTML = post.cooked || '';
+      const contentMarkdown = LinuxDoMarkdown.htmlToMarkdown(
+        container,
+        'https://linux.do/t/' + getTopicSlug() + '/' + getTopicId(),
+      );
+      if (!contentMarkdown) return null;
       return {
         post,
-        contentMarkdown: LinuxDoMarkdown.htmlToMarkdown(
-          container,
-          'https://linux.do/t/' + getTopicSlug() + '/' + getTopicId(),
-        ),
+        contentMarkdown: Number(post.post_number) === 1
+          ? LinuxDoMarkdown.removeDuplicateLeadingTitle(contentMarkdown, getTopicTitle())
+          : contentMarkdown,
       };
-    }).filter(meta => meta.contentMarkdown);
+    }).filter(Boolean);
   }
 
   function buildTopicExportSections(metas) {
@@ -170,8 +174,11 @@
     topicExportInProgress = true;
     setTopicExportBusy(true, '导出准备中...');
     try {
-      showExportProgress('正在读取主贴和评论...');
-      const posts = await fetchTopicPostsForExport();
+      const settings = await StarStorage.getSettings();
+      const includeComments = settings.includeCommentsInDownloads === true;
+      showExportProgress(includeComments ? '正在读取主贴和评论...' : '正在读取主贴...');
+      const fetchedPosts = await fetchTopicPostsForExport({ includeComments });
+      const posts = includeComments ? fetchedPosts : fetchedPosts.filter(post => Number(post.post_number) === 1);
       const metas = buildTopicExportMetas(posts);
       setTopicExportBusy(true, '处理图片中...');
       const imageResult = await archiveMarkdownImagesQueued(metas, (done, total) => {
@@ -179,7 +186,7 @@
       });
       const sections = buildTopicExportSections(metas);
       if (!sections.length) return showToast('没有找到帖子正文', '⚠️');
-      downloadTopicZip(sections, imageResult.assets);
+      downloadTopicZip(sections, imageResult.assets, includeComments);
       const warning = imageResult.failed ? '，' + imageResult.failed + ' 张图片保留原链接' : '';
       showToast('已导出 ' + sections.length + ' 条帖子' + warning);
     } catch (err) {
@@ -190,21 +197,20 @@
     }
   }
 
-  async function saveAllTopicExternal() {
-    if (topicExternalInProgress) return;
-    const anchor = document.querySelector('.' + TOPIC_EXTERNAL_CLASS);
-    const targets = await LinuxDoIntegrations.showTargetMenu(anchor || document.body);
-    if (!targets.length) return;
+  async function saveAllTopicExternal(targets) {
+    if (topicExternalInProgress || !targets?.length) return;
     topicExternalInProgress = true;
-    setTopicExternalBusy(true, '准备保存到外部...');
+    setTopicExportBusy(true, '准备保存到外部...');
     try {
-      showExportProgress('正在读取主贴和评论...');
-      const posts = await fetchTopicPostsForExport();
+      const settings = await StarStorage.getSettings();
+      const includeComments = settings.includeCommentsInDownloads === true;
+      showExportProgress(includeComments ? '正在读取主贴和评论...' : '正在读取主贴...');
+      const posts = await fetchTopicPostsForExport({ includeComments });
       const metas = buildTopicExportMetas(posts);
       if (!metas.length) throw new Error('没有找到帖子正文');
-      setTopicExternalBusy(true, '处理图片中...');
+      setTopicExportBusy(true, '处理图片中...');
       const imageResult = await archiveMarkdownImagesQueued(metas, (done, total) => {
-        if (total) setTopicExternalBusy(true, `处理图片 ${done}/${total}...`);
+        if (total) setTopicExportBusy(true, `处理图片 ${done}/${total}...`);
       });
       const sections = buildTopicExportSections(metas);
       const data = {
@@ -228,7 +234,7 @@
       showToast(err.message || '外部保存失败', '⚠️');
     } finally {
       topicExternalInProgress = false;
-      setTopicExternalBusy(false);
+      setTopicExportBusy(false);
     }
   }
 
@@ -237,7 +243,7 @@
     showExportProgress('正在处理图片 ' + done + '/' + total + '...');
   }
 
-  function downloadTopicZip(sections, assets) {
+  function downloadTopicZip(sections, assets, includeComments) {
     const title = safeFilename(getTopicTitle());
     const packageData = LinuxDoMarkdown.buildMarkdownZip(
       sections.join('\n\n'),
@@ -245,19 +251,19 @@
       title + '.md',
     );
     const zip = LinuxDoMarkdown.createZip(packageData.files);
-    downloadBlob(zip, title + '-all-posts.zip');
+    downloadBlob(zip, title + (includeComments ? '-all-posts.zip' : '-post.zip'));
   }
 
-  async function fetchTopicPostsForExport() {
+  async function fetchTopicPostsForExport({ includeComments = true } = {}) {
     const topicId = getTopicId();
     const apiBase = `https://linux.do/t/${topicId}`;
     return LinuxDoMarkdown.fetchTopicPostsFromApi(apiBase, progress => {
       if (progress.phase === 'retry') {
         showExportProgress(`接口限频，${Math.ceil(progress.delay / 1000)} 秒后重试...`);
       } else if (progress.phase === 'posts') {
-        showExportProgress(`正在读取评论 ${progress.completed}/${progress.total}...`);
+        showExportProgress(`${includeComments ? '正在读取评论' : '正在读取主贴'} ${progress.completed}/${progress.total}...`);
       }
-    });
+    }, { includeComments });
   }
 
   function safeFilename(value) {
@@ -549,27 +555,16 @@
     return btn;
   }
 
-  function setTopicExportBusy(busy, label = '导出帖子 ZIP（含全部评论）') {
+  function setTopicExportBusy(busy, label = '保存帖子') {
     document.querySelectorAll('.' + TOPIC_EXPORT_CLASS).forEach(btn => {
       btn.disabled = busy;
       btn.classList.toggle('ld-md-export-loading', busy);
       btn.setAttribute('aria-busy', busy ? 'true' : 'false');
-      btn.setAttribute('title', busy ? label : '导出帖子 ZIP（含全部评论）');
-      btn.setAttribute('aria-label', busy ? label : '导出帖子 ZIP（含全部评论）');
+      btn.setAttribute('title', busy ? label : '保存帖子');
+      btn.setAttribute('aria-label', busy ? label : '保存帖子');
       btn.innerHTML = busy
         ? '<span class="ld-md-export-spinner" aria-hidden="true"></span>'
         : EXPORT_SVG;
-    });
-  }
-
-  function setTopicExternalBusy(busy, label = '保存到外部') {
-    document.querySelectorAll('.' + TOPIC_EXTERNAL_CLASS).forEach(btn => {
-      btn.disabled = busy;
-      btn.classList.toggle('ld-md-export-loading', busy);
-      btn.setAttribute('aria-busy', busy ? 'true' : 'false');
-      btn.setAttribute('title', busy ? label : '保存到外部');
-      btn.setAttribute('aria-label', busy ? label : '保存到外部');
-      btn.innerHTML = busy ? '<span class="ld-md-export-spinner" aria-hidden="true"></span>' : EXTERNAL_SVG;
     });
   }
 
@@ -714,14 +709,23 @@
   }
 
   function ensureTopicExportButton(titleEl) {
+    titleEl.querySelectorAll('.' + LEGACY_TOPIC_EXTERNAL_CLASS).forEach(btn => btn.remove());
     if (titleEl.querySelector(`.${TOPIC_EXPORT_CLASS}`)) return;
-    const exportBtn = createMarkdownExportButton('导出帖子 ZIP（含全部评论）', exportAllTopicPosts, TOPIC_EXPORT_CLASS);
+    const exportBtn = createMarkdownExportButton('保存帖子', openTopicSaveMenu, TOPIC_EXPORT_CLASS);
     exportBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
     titleEl.appendChild(exportBtn);
-    if (!titleEl.querySelector(`.${TOPIC_EXTERNAL_CLASS}`)) {
-      const externalBtn = createMarkdownExportButton('保存到外部', saveAllTopicExternal, TOPIC_EXTERNAL_CLASS);
-      externalBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
-      titleEl.appendChild(externalBtn);
+  }
+
+  async function openTopicSaveMenu() {
+    const anchor = document.querySelector('.' + TOPIC_EXPORT_CLASS);
+    if (!anchor || anchor.disabled || topicSaveMenuInProgress) return;
+    topicSaveMenuInProgress = true;
+    try {
+      const action = await LinuxDoIntegrations.showTopicSaveMenu(anchor);
+      if (action?.type === 'zip') return exportAllTopicPosts();
+      if (action?.type === 'external') return saveAllTopicExternal(action.targets);
+    } finally {
+      topicSaveMenuInProgress = false;
     }
   }
 
@@ -829,14 +833,14 @@
       // Only act on topic pages (/t/xxx/123)
       if (!/\/t\/[^/]+\/\d+/.test(location.pathname)) {
         // Not a topic page — clean up any leftover stars
-        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}`).forEach(el => el.remove());
+        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}, .${LEGACY_TOPIC_EXTERNAL_CLASS}`).forEach(el => el.remove());
         return;
       }
 
       // Topic page: wait for DOM to render, then inject
       setTimeout(() => {
         document.querySelectorAll('[data-ld-star-injected]').forEach(el => el.removeAttribute('data-ld-star-injected'));
-        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}`).forEach(el => el.remove());
+        document.querySelectorAll(`.${STAR_CLASS}, .${TOPIC_EXPORT_CLASS}, .${LEGACY_TOPIC_EXTERNAL_CLASS}`).forEach(el => el.remove());
         closePopup();
         waitAndInject();
       }, 800);

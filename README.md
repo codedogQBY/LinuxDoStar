@@ -60,12 +60,14 @@
 ### 保存到外部服务
 1. 打开管理页，进入「收藏设置」
 2. 配置需要使用的目标：
-   - **Obsidian**：填写 Vault 名称和文件夹；需要本地保存图片时，再填写 Local REST API 插件的 API Key 和端口
+   - **Obsidian**：填写 Local REST API 插件的 API Key 和端口后，正文会直接写入 Vault；未填写时使用 Advanced URI。勾选本地保存图片后，归档图片也会写入 Vault
    - **Notion**：填写 Internal Integration Token 和 Database ID，并将 Integration 连接到 Database
    - **飞书**：填写自建应用的 App ID / Secret、多维表格 `app_token` 和 `table_id`
 3. 在帖子标题旁、管理页帖子卡片或 Popup 帖子旁点击「保存到外部」，选择一个或全部已配置目标
 
 Notion Database 推荐准备 `标题`（Title）、`链接`（URL）、`作者`、`分类`、`标签`、`保存日期` 和 `评论数` 属性。飞书多维表格默认使用 `标题`、`链接`、`作者`、`保存时间`、`评论数` 和 `正文` 字段；Markdown 附件为可选项。
+
+「收藏设置」中的「保存时包含评论」会统一控制 ZIP、Obsidian、Notion 和飞书保存内容；默认关闭时只保存主贴。
 
 ## 项目结构
 

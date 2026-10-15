@@ -98,6 +98,26 @@
     return (text || '').replace(/\s+/g, ' ').trim();
   }
 
+  function removeDuplicateLeadingTitle(markdown, title) {
+    const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+    let bodyStart = lines.findIndex(line => line.trim());
+    const normalizedTitle = normalizeInline(title);
+    let removedHeading = false;
+
+    while (bodyStart >= 0 && bodyStart < lines.length) {
+      const heading = lines[bodyStart].match(/^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/);
+      if (!heading || normalizeInline(heading[1]) !== normalizedTitle) break;
+      removedHeading = true;
+      bodyStart += 1;
+      while (bodyStart < lines.length && !lines[bodyStart].trim()) bodyStart += 1;
+    }
+    if (!removedHeading) return markdown || '';
+
+    const bodyLines = lines.slice(bodyStart);
+    while (bodyLines.length && !bodyLines[bodyLines.length - 1].trim()) bodyLines.pop();
+    return bodyLines.join('\n');
+  }
+
   function normalizeMarkdown(text) {
     return (text || '')
       .replace(/\u00a0/g, ' ')
@@ -165,8 +185,8 @@
     return { body: rewritten.body, files, imageCount: rewritten.used.size };
   }
 
-  async function buildSavedTopicsArchive(store = {}, requestAsset, onProgress) {
-    const metas = buildSavedTopicMetas(store);
+  async function buildSavedTopicsArchive(store = {}, requestAsset, onProgress, { includeComments = false } = {}) {
+    const metas = buildSavedTopicMetas(store, includeComments);
     const imageResult = await archiveMarkdownImagesQueued(metas, requestAsset, onProgress);
     const sections = metas.map(meta => meta.heading + '\n\n' + meta.contentMarkdown);
     const assets = mergeAssetMaps(store.assets || {}, imageResult.assets);
@@ -176,10 +196,19 @@
     };
   }
 
-  async function fetchTopicPostsFromApi(apiBase, onProgress) {
+  async function fetchTopicPostsFromApi(apiBase, onProgress, { includeComments = true } = {}) {
     const topicPayload = await fetchTopicJson(`${apiBase}.json`, onProgress);
     const stream = topicPayload.post_stream?.stream || [];
     const postsById = new Map((topicPayload.post_stream?.posts || []).map(post => [String(post.id), post]));
+    if (!includeComments) {
+      let primaryPost = [...postsById.values()].find(post => Number(post.post_number) === 1);
+      if (!primaryPost && stream.length) {
+        const primaryPostId = String(stream[0]);
+        if (!postsById.has(primaryPostId)) await fetchMissingTopicPosts(apiBase, [primaryPostId], postsById, onProgress);
+        primaryPost = postsById.get(primaryPostId);
+      }
+      return primaryPost && Number(primaryPost.post_number) === 1 ? [primaryPost] : [];
+    }
     const missing = stream.map(String).filter(id => !postsById.has(id));
     await fetchMissingTopicPosts(apiBase, missing, postsById, onProgress);
     return orderTopicPosts(stream, postsById);
@@ -257,7 +286,7 @@
     return new Promise(resolve => setTimeout(resolve, milliseconds));
   }
 
-  function buildSavedTopicMetas(store) {
+  function buildSavedTopicMetas(store, includeComments = false) {
     const metas = [];
     const topics = Object.values(store.bookmarks || {})
       .filter(topic => topic && !topic._deleted)
@@ -265,14 +294,17 @@
 
     for (const topic of topics) {
       if (topic.contentMarkdown) {
+        const title = normalizeInline(topic.topicTitle || '未知标题');
         metas.push({
-          heading: '# ' + normalizeInline(topic.topicTitle || '未知标题'),
-          contentMarkdown: topic.contentMarkdown,
+          heading: '# ' + title,
+          contentMarkdown: removeDuplicateLeadingTitle(topic.contentMarkdown, title),
         });
       }
-      const posts = Object.values(topic.posts || {})
-        .filter(post => post && !post._deleted && post.contentMarkdown)
-        .sort((a, b) => Number(a.postNumber || 0) - Number(b.postNumber || 0));
+      const posts = includeComments
+        ? Object.values(topic.posts || {})
+          .filter(post => post && !post._deleted && post.contentMarkdown)
+          .sort((a, b) => Number(a.postNumber || 0) - Number(b.postNumber || 0))
+        : [];
       for (const post of posts) {
         const author = post.author ? ' @' + normalizeInline(post.author) : '';
         metas.push({
@@ -535,6 +567,7 @@
     htmlToMarkdown,
     normalizeInline,
     normalizeMarkdown,
+    removeDuplicateLeadingTitle,
     dataUrlToBytes,
     extensionForMime,
     buildMarkdownZip,

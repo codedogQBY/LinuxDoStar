@@ -30,6 +30,7 @@ const STORAGE_KEY = 'linuxdo_stars';
 const SETTINGS_KEY = 'linuxdo_settings';
 const DEFAULT_SETTINGS = {
   autoArchiveMarkdown: true,
+  includeCommentsInDownloads: false,
   obsidianVault: '',
   obsidianFolder: '',
   obsidianDownloadImages: false,

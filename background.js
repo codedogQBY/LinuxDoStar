@@ -5,7 +5,7 @@
 
 import { StarStorage } from './storage-esm.js';
 import { SyncManager } from './sync-esm.js';
-import { saveExternal, saveObsidianMedia, testExternal } from './integrations-esm.js';
+import { saveExternal, saveObsidianMedia, saveObsidianNote, testExternal } from './integrations-esm.js';
 
 const SYNC_ALARM = 'linuxdo-star-sync';
 const SYNC_DEBOUNCE_ALARM = 'linuxdo-star-sync-debounce';
@@ -82,6 +82,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SAVE_OBSIDIAN_MEDIA') {
     saveObsidianMedia(message).then(result => sendResponse({ ok: true, ...result }))
       .catch(error => sendResponse({ ok: false, message: error.message || 'Obsidian 图片保存失败' }));
+    return true;
+  }
+  if (message.type === 'SAVE_OBSIDIAN_NOTE') {
+    saveObsidianNote(message).then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, message: error.message || 'Obsidian Markdown 保存失败' }));
     return true;
   }
 });

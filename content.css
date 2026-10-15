@@ -118,27 +118,6 @@
   cursor: wait;
   opacity: 0.65;
 }
-.ld-external-topic-save-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin-left: 2px;
-  vertical-align: middle;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0;
-  color: var(--primary-medium, #919191);
-}
-.ld-external-topic-save-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--primary, #3d3d3d);
-}
-.ld-external-topic-save-btn > svg { width: 18px; height: 18px; }
-.ld-external-topic-save-btn.ld-md-export-loading { cursor: wait; opacity: .65; }
 .ld-md-export-spinner {
   display: inline-block;
   width: 16px;

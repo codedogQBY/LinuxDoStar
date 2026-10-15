@@ -97,6 +97,22 @@ export async function saveObsidianMedia({ assets = [], folder, apiKey, port = 27
   return { paths, failed };
 }
 
+export async function saveObsidianNote({ filePath, markdown, apiKey, port = 27123 }) {
+  if (!apiKey) throw new Error('请填写 Obsidian Local REST API Key');
+  const path = normalizeVaultPath(filePath);
+  const baseUrl = await findObsidianBaseUrl(port, apiKey);
+  const response = await fetch(`${baseUrl}/vault/${encodePath(path)}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'text/markdown; charset=utf-8',
+    },
+    body: String(markdown || ''),
+  });
+  if (!response.ok) throw new Error(`保存 Obsidian Markdown 失败：HTTP ${response.status}`);
+  return { path };
+}
+
 async function saveToNotion(data, settings) {
   const token = String(settings.notionToken || '').trim();
   const databaseId = normalizeNotionId(settings.notionDatabaseId);
@@ -427,6 +443,13 @@ function chunk(items, size) { const chunks = []; for (let i = 0; i < items.lengt
 function truncate(value, max) { return String(value || '').slice(0, max); }
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function encodePath(path) { return path.split('/').map(encodeURIComponent).join('/'); }
+function normalizeVaultPath(path) {
+  const parts = String(path || '').split('/').filter(Boolean);
+  if (!parts.length || parts.some(part => part === '.' || part === '..')) {
+    throw new Error('Obsidian 文件路径无效');
+  }
+  return parts.join('/');
+}
 function extensionForMime(mime = '') { return ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif' })[mime.toLowerCase().split(';')[0]] || 'bin'; }
 function dataUrlToBytes(dataUrl) {
   const comma = String(dataUrl).indexOf(',');
