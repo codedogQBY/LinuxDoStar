@@ -487,11 +487,13 @@
   // extra dependency in the extension bundle.
   function createZip(files = []) {
     const encoder = new TextEncoder();
+    const exportDate = new Date();
+    const exportDosDateTime = toDosDateTime(exportDate);
     const entries = files.filter(file => file?.path).map(file => {
       const name = String(file.path).replace(/^\/+/, '');
       const nameBytes = encoder.encode(name);
       const data = toBytes(file.data);
-      return { nameBytes, data, crc: crc32(data) };
+      return { nameBytes, data, crc: crc32(data), ...exportDosDateTime };
     });
     const localParts = [];
     const centralParts = [];
@@ -511,12 +513,23 @@
     return new Blob([joinByteParts(parts)], { type: 'application/zip' });
   }
 
+  function toDosDateTime(date) {
+    const dateValue = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+    const year = Math.max(1980, Math.min(2107, dateValue.getFullYear()));
+    return {
+      dosTime: (dateValue.getHours() << 11) | (dateValue.getMinutes() << 5) | Math.floor(dateValue.getSeconds() / 2),
+      dosDate: ((year - 1980) << 9) | ((dateValue.getMonth() + 1) << 5) | dateValue.getDate(),
+    };
+  }
+
   function createLocalHeader(entry) {
     const header = new Uint8Array(30 + entry.nameBytes.length);
     const view = new DataView(header.buffer);
     writeU32(view, 0, 0x04034b50);
     writeU16(view, 4, 20);
     writeU16(view, 6, 0x0800);
+    writeU16(view, 10, entry.dosTime);
+    writeU16(view, 12, entry.dosDate);
     writeU32(view, 14, entry.crc);
     writeU32(view, 18, entry.data.length);
     writeU32(view, 22, entry.data.length);
@@ -532,6 +545,8 @@
     writeU16(view, 4, 20);
     writeU16(view, 6, 20);
     writeU16(view, 8, 0x0800);
+    writeU16(view, 12, entry.dosTime);
+    writeU16(view, 14, entry.dosDate);
     writeU32(view, 16, entry.crc);
     writeU32(view, 20, entry.data.length);
     writeU32(view, 24, entry.data.length);
